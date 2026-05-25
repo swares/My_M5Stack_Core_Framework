@@ -1,0 +1,99 @@
+#pragma once
+// ============================================================
+//  WebAPI.h  –  HTTPS REST JSON server + embedded HTML dashboard
+//
+//  The dashboard and REST API are served over TLS by
+//  ESPWebServerSecure — the esp32_idf5_https_server_compat
+//  wrapper, which mirrors the standard Arduino WebServer API.  A
+//  second, plain-HTTP ESPWebServer on port 80 serves no content;
+//  it only 301-redirects callers to the HTTPS port.  The device's
+//  self-signed TLS certificate is embedded at compile time — see
+//  https_cert.h.
+//
+//  Requires TWO libraries (install both):
+//    • esp32_idf5_https_server_compat  – the WebServer-style wrapper
+//    • esp32_idf5_https_server         – the TLS server it builds on
+// ============================================================
+#include "Config.h"  // for the OUT_WEB build switch
+
+#if OUT_WEB
+#include <WiFi.h>
+#include <ESPWebServer.hpp>
+#include <ESPWebServerSecure.hpp>
+#include <ArduinoJson.h>
+#include "IDevice.h"
+
+class Framework;
+
+class WebAPI {
+ public:
+  bool enabled = OUT_WEB;
+
+  void begin(Framework* fw);
+  void update();
+
+ private:
+  ESPWebServerSecure* _srv = nullptr;     // HTTPS  :WEB_HTTPS_PORT
+  ESPWebServer* _httpRedirect = nullptr;  // HTTP :WEB_HTTP_REDIRECT_PORT
+  Framework* _fw = nullptr;
+
+  // Handler for the plain-HTTP port-80 server: 301 every request to
+  // the equivalent HTTPS URL.
+  void _sendRedirect();
+
+  // Path portion of the current request URI, with any "?query"
+  // stripped.  ESPWebServerSecure::uri() returns the full request
+  // target (path + query), unlike the standard Arduino WebServer —
+  // so any routing logic that inspects the path must strip the
+  // query first or "/api/pps/set?vset=5" never matches "/set".
+  String _reqPath();
+
+  void _route_root();
+  void _route_all();
+  void _route_plugin();
+  void _route_control(const String& slug);
+  void _route_scan();
+  void _route_config();
+  void _route_mqtt();
+  void _route_sdcard();
+  void _route_endpoints();
+  void _route_404();
+
+  // Fills `doc` with the MQTT status snapshot used by both
+  // /api/mqtt and /api/mqtt/publish.  Declared here so both routes
+  // share one source of truth for the JSON shape.
+  void _buildMqttStatus(JsonDocument& doc);
+
+  // Fills `doc` with the SD logger status snapshot used by both
+  // /api/sdcard and /api/sdcard/flush.  Same single-source-of-truth
+  // pattern as _buildMqttStatus.
+  void _buildSdStatus(JsonDocument& doc);
+
+  // Returns true iff the current request should be served.  When
+  // WEB_AUTH_USER is empty this is unconditionally true.  Otherwise
+  // checks HTTP Basic Auth against the configured credentials and,
+  // if they don't match, sends a 401 with WWW-Authenticate and
+  // returns false.  Every route handler calls this first.  The
+  // credentials now travel inside the TLS tunnel, so they are
+  // encrypted on the wire.
+  bool _requireAuth();
+
+  void _cors();
+  void _json(JsonDocument& doc, int code = 200);
+  void _buildSensorObj(JsonObject& obj, IDevice* p);
+};
+
+#else   // !OUT_WEB
+// ── Stub — WebAPI compiled out via Config.h (OUT_WEB = false) ─
+//  Mirrors the real class's public surface (begin / update /
+//  enabled) so Framework keeps building; every method is an inert
+//  no-op and the ESPWebServer / ESPWebServerSecure libraries are
+//  not pulled into the build at all.
+class Framework;
+class WebAPI {
+ public:
+  bool enabled = false;
+  void begin(Framework*) {}
+  void update() {}
+};
+#endif  // OUT_WEB
