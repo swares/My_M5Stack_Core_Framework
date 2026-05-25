@@ -1,9 +1,7 @@
-# M5Stack  –  Sensor Framework
-
-**Partially tested on Core1/Core2/CoreS3**
+# M5Stack  –  I2C Sensor Framework
 
 A modular, plugin-based Arduino framework that auto-detects and manages
-I2C sensors on both internal and external buses, with five independently
+I2C sensors on both internal and external buses, with three independently
 controllable output channels.
 
 **Supported boards (auto-detected at runtime):**
@@ -1535,6 +1533,27 @@ M5Stack_I2C_Framework/
     fall back to AP).  `/api/config` now reports `wifi_mode`
     (`"ap"` / `"station"`) and `/api/endpoints` reports the correct
     IP for whichever mode is active.
+51. **Navigable sensor-detail display** — the LCD now opens on a
+    full-screen detail view of a single read-only sensor: the title
+    line shows the device name flanked by left/right navigation
+    arrows, and the body shows that sensor's readings (one big value,
+    or a 2-column grid of up to eight).  Cycle between read-only
+    sensors with the outer tactile buttons — `BtnA` = previous,
+    `BtnC` = next — on a Core1 / Core2, or by tapping the title-line
+    arrows on any touch board (Core2 / CoreS3).  The middle button
+    (`BtnB`), or a tap on the title-bar centre, toggles to the
+    all-sensors ticker overview and back.  Navigation is manual: the
+    view stays pinned on the chosen sensor until the next press.
+    Controllable devices (relays, servos, DACs, ...) are excluded —
+    only read-only sensors appear in the cycle.  `DisplayManager`
+    gained a `handleInput()` (called every loop, right after
+    `M5.update()`) plus `_renderDetail` / `_renderReadings` /
+    `_headerNav`; the detail view self-throttles to `POLL_MS` and
+    repaints immediately on a button or touch event.  A clock panel
+    is appended to the cycle whenever the framework has a synced
+    wall-clock time (`Framework::timeSynced()`) — it shows the
+    current time and date, and is omitted in AP mode or after a
+    failed NTP sync.
 
 ---
 
