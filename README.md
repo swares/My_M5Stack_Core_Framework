@@ -1,4 +1,4 @@
-# M5Stack  –  I2C Sensor Framework
+# M5Stack  –  Sensor Framework
 
 A modular, plugin-based Arduino framework that auto-detects and manages
 I2C sensors on both internal and external buses, with three independently
