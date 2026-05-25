@@ -130,6 +130,20 @@ void DisplayManager::_header(const String& title, uint16_t col) {
   M5.Display.drawCentreString(title, _W/2, 14, &fonts::FreeSansBold9pt7b);
 }
 
+// ── _headerNav ────────────────────────────────────────────────
+//  Like _header(), but with left/right navigation arrows for the
+//  sensor-detail view.  The arrow zones double as touch targets —
+//  see handleInput().
+void DisplayManager::_headerNav(const String& title) {
+  M5.Display.fillRect(0, 0, _W, HEADER_H, C_HDR);
+  int midY = HEADER_H / 2;
+  M5.Display.fillTriangle(14, midY, 34, midY - 11, 34, midY + 11, C_ACNT);
+  M5.Display.fillTriangle(_W - 14, midY, _W - 34, midY - 11, _W - 34,
+                          midY + 11, C_ACNT);
+  M5.Display.setTextColor(C_TEXT, C_HDR);
+  M5.Display.drawCentreString(title, _W / 2, 14, &fonts::FreeSansBold9pt7b);
+}
+
 // ── _footer ───────────────────────────────────────────────────
 void DisplayManager::_footer() {
   M5.Display.fillRect(0, _H-16, _W, 16, C_BAND);
@@ -140,15 +154,13 @@ void DisplayManager::_footer() {
   M5.Display.drawString(buf, 4, _H-14, &fonts::Font2);
 }
 
-// ── _renderPlugin ─────────────────────────────────────────────
-void DisplayManager::_renderPlugin(IDevice* p) {
+// ── _renderReadings ───────────────────────────────────────────
+//  Draws just the readings body (no header / footer) for one
+//  device — a big single value, or a 2-column grid of up to 8.
+void DisplayManager::_renderReadings(IDevice* p) {
   SensorVal vals[16];
   uint8_t   cnt = 0;
   p->getReadings(vals, cnt);
-
-  M5.Display.fillScreen(C_BG);
-  _header(p->name(), C_HDR);
-  _footer();
 
   if (!cnt) {
     M5.Display.setTextColor(C_DIM, C_BG);
@@ -194,6 +206,98 @@ void DisplayManager::_renderPlugin(IDevice* p) {
     M5.Display.setTextColor(C_ACNT, C_BG);
     M5.Display.drawString(vals[i].unit, bx + cW - 30, by+22, &fonts::Font2);
   }
+}
+
+// ── _roSensor ─────────────────────────────────────────────────
+//  Walk the plugin list and return the idx-th active read-only
+//  sensor (active and not controllable).  Always fills `total`
+//  with the count; returns nullptr if idx >= total.
+IDevice* DisplayManager::_roSensor(Framework* fw, uint8_t idx,
+                                   uint8_t& total) {
+  total = 0;
+  IDevice* hit = nullptr;
+  for (auto* p : fw->plugins()) {
+    if (!p->active || p->controllable()) continue;
+    if (total == idx) hit = p;
+    total++;
+  }
+  return hit;
+}
+
+// ── _renderDetail ─────────────────────────────────────────────
+//  Full-screen view of one read-only sensor: nav header with the
+//  left/right arrows, readings body, and a footer carrying an
+//  "n/total" position indicator.
+void DisplayManager::_renderDetail(Framework* fw) {
+  uint8_t roTotal = 0;
+  _roSensor(fw, 0, roTotal);  // count the active read-only sensors
+  bool hasTime = fw->timeSynced();
+  uint8_t total = static_cast<uint8_t>(roTotal + (hasTime ? 1 : 0));
+
+  M5.Display.startWrite();
+  M5.Display.fillScreen(C_BG);
+
+  if (!total) {
+    _headerNav("Sensor Detail");
+    M5.Display.setTextColor(C_DIM, C_BG);
+    M5.Display.drawCentreString("No read-only sensors", _W / 2, _H / 2,
+                                &fonts::Font2);
+    _footer();
+    M5.Display.endWrite();
+    return;
+  }
+
+  // _focusIdx can sit past the end if the panel set ever changes.
+  if (_focusIdx >= total) _focusIdx = static_cast<uint8_t>(total - 1);
+
+  // The clock panel, when present, is appended after the sensors.
+  if (hasTime && _focusIdx == roTotal) {
+    _headerNav("Time");
+    _renderTime(fw);
+  } else {
+    uint8_t st = 0;
+    IDevice* p = _roSensor(fw, _focusIdx, st);
+    if (p) {
+      _headerNav(p->name());
+      _renderReadings(p);
+    }
+  }
+  _footer();
+
+  // Position indicator, right-aligned in the footer band.
+  char pos[12];
+  snprintf(pos, sizeof(pos), "%u/%u", static_cast<unsigned>(_focusIdx + 1),
+           static_cast<unsigned>(total));
+  M5.Display.setTextColor(C_DIM, C_BAND);
+  M5.Display.drawRightString(pos, _W - 4, _H - 14, &fonts::Font2);
+
+  M5.Display.endWrite();
+}
+
+// ── _renderTime ───────────────────────────────────────────────
+//  Body of the clock panel — the current wall-clock time large and
+//  centred, with the date below.  Only reached when the framework
+//  reports a synced time (see _renderDetail / _panelCount).
+void DisplayManager::_renderTime(Framework* fw) {
+  char iso[24] = {0};
+  fw->nowIso8601(iso, sizeof(iso));  // "YYYY-MM-DDTHH:MM:SS"
+  String s(iso);
+  String date = (s.length() >= 10) ? s.substring(0, 10) : s;
+  String tm = (s.length() >= 19) ? s.substring(11, 19) : String("--:--:--");
+
+  M5.Display.setTextColor(C_ACNT, C_BG);
+  M5.Display.drawCentreString(tm, _W / 2, 70, &fonts::FreeSansBold18pt7b);
+  M5.Display.setTextColor(C_DIM, C_BG);
+  M5.Display.drawCentreString(date, _W / 2, 122, &fonts::Font2);
+}
+
+// ── _panelCount ───────────────────────────────────────────────
+//  Number of detail-view panels: every active read-only sensor,
+//  plus one for the clock when a synced time is available.
+uint8_t DisplayManager::_panelCount(Framework* fw) {
+  uint8_t roTotal = 0;
+  _roSensor(fw, 0, roTotal);
+  return static_cast<uint8_t>(roTotal + (fw->timeSynced() ? 1 : 0));
 }
 
 // ── _buildTicker ──────────────────────────────────────────────
@@ -292,14 +396,72 @@ void DisplayManager::_renderFixed(Framework* fw) {
   M5.Display.endWrite();
 }
 
+// ── handleInput ───────────────────────────────────────────────
+//  Polls the outer buttons (BtnA = previous, BtnC = next, BtnB =
+//  toggle) and the title-line touch arrows, then updates the
+//  detail-view selection.  Must run every loop, right after
+//  M5.update() — wasPressed() only reflects the most recent
+//  M5.update() cycle.
+void DisplayManager::handleInput(Framework* fw) {
+  if (!enabled || !_ready) return;
+
+  bool goPrev = M5.BtnA.wasPressed();    // outer-left  button
+  bool goNext = M5.BtnC.wasPressed();    // outer-right button
+  bool goToggle = M5.BtnB.wasPressed();  // middle button
+
+  // Touch boards: the title band is a tap target.  In the detail
+  // view the left third = previous, right third = next, centre =
+  // toggle; in the overview any header tap returns to detail.
+  if (M5.Touch.isEnabled()) {
+    auto t = M5.Touch.getDetail();
+    if (t.wasPressed() && t.y >= 0 && t.y < HEADER_H) {
+      if (_view != View::Detail) {
+        goToggle = true;
+      } else if (t.x < ARROW_W) {
+        goPrev = true;
+      } else if (t.x >= _W - ARROW_W) {
+        goNext = true;
+      } else {
+        goToggle = true;
+      }
+    }
+  }
+
+  if (goToggle)
+    _view = (_view == View::Detail) ? View::Overview : View::Detail;
+
+  if (_view == View::Detail && (goPrev || goNext)) {
+    uint8_t total = _panelCount(fw);
+    if (total) {
+      if (goNext)
+        _focusIdx = static_cast<uint8_t>((_focusIdx + 1) % total);
+      if (goPrev)
+        _focusIdx = static_cast<uint8_t>((_focusIdx + total - 1) % total);
+    }
+  }
+
+  if (goPrev || goNext || goToggle) _dirty = true;
+}
+
 // ── update ────────────────────────────────────────────────────
 void DisplayManager::update(Framework* fw) {
   if (!enabled || !_ready) return;
 
-  if (DISPLAY_SCROLL) {
-    _renderTicker(fw);
+  if (_view == View::Detail) {
+    // Self-throttled: redraw on input (_dirty) or every POLL_MS so
+    // the readings stay live without hammering the SPI bus.
+    if (_dirty || millis() - _detailDrawn >= POLL_MS) {
+      _renderDetail(fw);
+      _detailDrawn = millis();
+      _dirty = false;
+    }
     return;
   }
-  _renderFixed(fw);
+
+  // Overview — the existing all-sensors display.
+  if (DISPLAY_SCROLL)
+    _renderTicker(fw);
+  else
+    _renderFixed(fw);
 }
 #endif  // OUT_DISPLAY

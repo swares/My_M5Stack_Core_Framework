@@ -14,8 +14,8 @@
 //  joining a network — for a standalone unit with no network to
 //  join.  Connect a phone/laptop to that AP and open the
 //  dashboard at the AP's IP.
-[[maybe_unused]] constexpr char WIFI_SSID[] = "";
-[[maybe_unused]] constexpr char WIFI_PASSWORD[] = "";
+[[maybe_unused]] constexpr char WIFI_SSID[] = "Linksys";
+[[maybe_unused]] constexpr char WIFI_PASSWORD[] = "1let2me3in!";
 // give up after this many ms
 [[maybe_unused]] constexpr unsigned long WIFI_TIMEOUT_MS = 15000;
 
