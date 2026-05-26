@@ -86,6 +86,10 @@ class DisplayManager {
   // Title used in the framework header / ticker.  Filled in by begin().
   String _frameworkTitle = "M5Stack I2C Framework";
 
+  // Device IP, captured by showWiFi() (station or AP mode).  Shown
+  // in the footer so it stays on screen, not just the boot splash.
+  String _ip;
+
   // Layout
   static constexpr int HEADER_H = 46;  // title-band height (px)
   static constexpr int ARROW_W = 56;   // nav-arrow touch zone width

@@ -53,7 +53,7 @@ void Framework::begin() {
   Serial.println(F("\n============================================"));
   Serial.printf("  %s  I2C Framework  –  Booting\n", _board->longName);
   Serial.println(F("============================================"));
-  Serial.println(F("[Build] 2026-05-25b (detail view: clock panel)"));
+  Serial.println(F("[Build] 2026-05-25d (LCD footer IP readout)"));
   Serial.printf("[Board] Detected: %s\n", _board->longName);
 
   _initBuses();

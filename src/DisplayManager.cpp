@@ -60,6 +60,7 @@ void DisplayManager::showSplash() {
 
 // ── showWiFi ──────────────────────────────────────────────────
 void DisplayManager::showWiFi(const String& ssid, const String& ip) {
+  _ip = ip;  // cache for the persistent footer readout
   if (!_ready) return;
   M5.Display.startWrite();
   M5.Display.fillScreen(C_BG);
@@ -152,6 +153,12 @@ void DisplayManager::_footer() {
   uint32_t s = millis()/1000;
   snprintf(buf, sizeof(buf), "up %02lu:%02lu:%02lu", s/3600, (s%3600)/60, s%60);
   M5.Display.drawString(buf, 4, _H-14, &fonts::Font2);
+  // Device IP — centred, brighter than the uptime so it reads at a
+  // glance.  Empty until WiFi/AP is up (showWiFi), then sticky.
+  if (_ip.length()) {
+    M5.Display.setTextColor(C_TEXT, C_BAND);
+    M5.Display.drawCentreString(_ip, _W / 2, _H - 14, &fonts::Font2);
+  }
 }
 
 // ── _renderReadings ───────────────────────────────────────────
