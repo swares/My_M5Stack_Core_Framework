@@ -133,6 +133,7 @@
 #include "plugins/PinDevice_Buzzer.h"
 #include "plugins/PinDevice_Servo.h"
 #include "plugins/PinDevice_Light.h"
+#include "plugins/PinDevice_Angle.h"   // Angle Unit (rotary pot) — analog ADC
 #include "plugins/PinDevice_Earth.h"
 #include "plugins/PinDevice_Mic.h"
 #include "plugins/PinDevice_ECG.h"      // ECG Module (AD8232) — analog + lead-off
@@ -143,6 +144,7 @@
 //  Port-B units (M5Stack Core Port-B = GPIO26 Yellow + GPIO36 White).
 //  Plain GPIO/ADC, no extra libraries.  Port B is a SINGLE physical
 //  connector, so only one of these can be plugged in at a time.
+#include "plugins/PinDevice_Cotech.h" // Weather Station
 #include "plugins/PinDevice_Hall.h"
 #include "plugins/PinDevice_Limit.h"
 #include "plugins/PinDevice_OP180.h"
@@ -277,18 +279,20 @@ void setup() {
   //  it must be 1 for an uncommented line below to take effect.
 #if ENABLE_PIN_DEVICES
   // fw.addPlugin(new PinDevice_PIR(36));            // motion in
-  // fw.addPlugin(new PinDevice_Relay(26));          // relay / SSR / flashlight / laser emitter — any on/off output
+  // fw.addPlugin(new PinDevice_Relay(9));          // relay / SSR / flashlight / laser emitter — any on/off output
   // fw.addPlugin(new PinDevice_Buzzer(26));         // PWM buzzer
   // fw.addPlugin(new PinDevice_Servo(26));          // PWM servo
-  // fw.addPlugin(new PinDevice_Light(36));          // CdS  — ADC1 pin
-  // fw.addPlugin(new PinDevice_Earth(36, 26));      // soil — ADC1 + GPIO
-  // fw.addPlugin(new PinDevice_Mic(36));            // mic  — ADC1 pin
+  // fw.addPlugin(new PinDevice_Light(8));          // CdS  — ADC1 pin
+  // fw.addPlugin(new PinDevice_Angle(8));          // rotary pot — ADC1 pin
+  // fw.addPlugin(new PinDevice_Earth(8, 9));      // soil — ADC1 + GPIO
+  // fw.addPlugin(new PinDevice_Mic(8));            // mic  — ADC1 pin
   // fw.addPlugin(new PinDevice_ECG(36, 26, 25));    // ECG (AD8232): out, LO+, LO-
   // fw.addPlugin(new PinDevice_Button(36));         // momentary button — also a Laser Rx
   // fw.addPlugin(new PinDevice_Motor(26));          // DC motor / vibration / mini fan (PWM)
   // fw.addPlugin(new PinDevice_Watering(36, 26));   // Watering: moisture ADC + pump
   // fw.addPlugin(new PinDevice_MQ(36, PinDevice_MQ::MQ2));  // MQ-series gas sensor — AOUT on an ADC1 pin
-  //
+  // fw.addPlugin(new PinDevice_Cotech(26));         // RX data pin
+
   //  These two also need their #include uncommented above:
   // fw.addPlugin(new PinDevice_DS18B20(26));        // 1-Wire temp
   // fw.addPlugin(new PinDevice_IR(36, 26));         // IR rx,tx
@@ -299,12 +303,12 @@ void setup() {
   //  two pins.  Default pins are baked in; the framework trusts the
   //  registration, so the one you uncomment must match whatever is
   //  physically plugged into Port B.
-  // fw.addPlugin(new PinDevice_Hall());             // hall magnet switch — G36
-  // fw.addPlugin(new PinDevice_Limit());            // mechanical limit switch — G36
-  // fw.addPlugin(new PinDevice_OP180());            // IR break-beam switch — G36
-  // fw.addPlugin(new PinDevice_DualButton());       // two push-buttons — G26 + G36
-  // fw.addPlugin(new PinDevice_TubePressure());     // gas pressure gauge — G36 (ADC)
-  // fw.addPlugin(new PinDevice_Grove2Grove());      // switched 5V out + current — G26 + G36
+  // fw.addPlugin(new PinDevice_Hall(8));             // hall magnet switch — G36
+  // fw.addPlugin(new PinDevice_Limit(8));            // mechanical limit switch — G36
+  // fw.addPlugin(new PinDevice_OP180(8));            // IR break-beam switch — G36
+  // fw.addPlugin(new PinDevice_DualButton(9,8));       // two push-buttons — G26 + G36
+  // fw.addPlugin(new PinDevice_TubePressure(8));     // gas pressure gauge — G36 (ADC)
+  // fw.addPlugin(new PinDevice_Grove2Grove(8,9));      // switched 5V out + current — G26 + G36
 #endif  // ENABLE_PIN_DEVICES
 
   // ── UART device (optional — register at most ONE) ────────

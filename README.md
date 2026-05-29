@@ -941,7 +941,7 @@ M5Stack_I2C_Framework/
 │   ├── Plugin_4IN8OUT.h        Stackable: 4In8Out — 4 digital in / 8 high-side out
 │   ├── Plugin_AIN420MA.h       Stackable: AIN4-20mA (0x55) — 4-ch 4-20mA analog input
 │   ├── Plugin_PPS.h            Stackable: PPS (0x35) — programmable power supply — controllable
-│   ├── Plugin_HMI.h            Stackable: HMI (0x41) — rotary encoder + buttons (read-only)
+│   ├── Plugin_HMI.h            Stackable: HMI (0x41) — encoder + buttons + 2 LEDs — controllable
 │   └── Plugin_FAN.h            Stackable: Fan Module v1.1 (0x18) — PWM fan + RPM — controllable
 └── README.md                   This file
 ```
@@ -1554,6 +1554,27 @@ M5Stack_I2C_Framework/
     wall-clock time (`Framework::timeSynced()`) — it shows the
     current time and date, and is omitted in AP mode or after a
     failed NTP sync.
+52. **HMI Module LED + reset controls** — `Plugin_HMI` is now
+    controllable.  Alongside the encoder / button readings it
+    exposes the module's two indicator LEDs as toggles and a
+    one-shot "reset count" button via the Web API (`?led1=1`,
+    `?led2=off`, `?reset=1`).  LED writes are plain one-byte
+    register writes to `0x30` / `0x31`, and the reset writes `1` to
+    `0x40` — both confirmed against M5Stack's `M5Module-HMI`
+    library.  `update()` reads the LED registers back, so the
+    dashboard toggles track the module's real state even across a
+    host reboot (the HMI keeps its own battery).  Because it now
+    advertises `controllable()`, the HMI moves from the read-only
+    sensor group into the controllable-device group — so it is no
+    longer one of the cyclable panels in the sensor-detail display.
+53. **Device IP on the LCD footer** — the footer status bar now
+    shows the device's IP address, centred between the uptime
+    counter (left) and the detail-view position indicator (right).
+    `DisplayManager` caches it from `showWiFi()`, which the
+    framework calls with `WiFi.localIP()` in station mode and
+    `WiFi.softAPIP()` in AP mode — so the address that previously
+    appeared only on the 3-second boot splash now stays on screen
+    on every panel and the ticker.
 
 ---
 
