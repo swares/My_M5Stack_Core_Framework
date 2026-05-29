@@ -8,8 +8,9 @@
 //  both an ADC pin and a GPIO pin, and pass both:
 //      fw.addPlugin(new PinDevice_Earth(/*analog=*/36, /*digital=*/26));
 //
-//  ⚠ The analog pin MUST be an ADC1 pin (GPIO 32-39) — see
-//  PinDevice_Light for why.  beginPins() warns on a non-ADC1 pin.
+//  ⚠ The analog pin MUST be an ADC1 pin (ESP32: GPIO 32-39,
+//  ESP32-S3: GPIO 1-10) — see PinDevice_Light for why.  beginPins()
+//  warns on a non-ADC1 pin.
 //
 //  Readings:  moisture_raw (0-4095), moisture_pct (0-100, relative),
 //             dry (1 = past the unit's wet/dry threshold).
@@ -27,10 +28,13 @@ class PinDevice_Earth : public IPinDevice {
 
   bool beginPins() override {
     pinMode(_dPin, INPUT);
-    if (_aPin < 32 || _aPin > 39)
+    // ADC1 ranges differ by chip: GPIO32-39 on the original ESP32,
+    // GPIO1-10 on the ESP32-S3.  Warn only when the pin is outside
+    // both, which is a near-certain wiring mistake.
+    if (!((_aPin >= 32 && _aPin <= 39) || (_aPin >= 1 && _aPin <= 10)))
       Serial.printf(
-          "[Pin] WARNING: %s analog pin GPIO%u is not an "
-          "ADC1 pin (32-39) — analogRead fails with WiFi on\n",
+          "[Pin] WARNING: %s analog pin GPIO%u may not be an "
+          "ADC1 pin — analogRead can fail with WiFi on\n",
           name(), _aPin);
     return true;
   }

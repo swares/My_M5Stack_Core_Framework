@@ -10,8 +10,9 @@
 //
 //      fw.addPlugin(new PinDevice_Mic(36));
 //
-//  ⚠ The pin MUST be an ADC1 pin (GPIO 32-39) — ADC2 fails while
-//  WiFi is on.  beginPins() warns on a non-ADC1 pin.
+//  ⚠ The pin MUST be an ADC1 pin (ESP32: GPIO 32-39, ESP32-S3:
+//  GPIO 1-10) — ADC2 fails while WiFi is on.  beginPins() warns on
+//  a non-ADC1 pin.
 //
 //  Readings:  level     — instantaneous pk-pk over last 100 ms window.
 //             level_pct — instantaneous level as percent of full scale.
@@ -39,10 +40,13 @@ class PinDevice_Mic : public IPinDevice {
   bool wantsFastPoll() const override { return true; }
 
   bool beginPins() override {
-    if (_pin < 32 || _pin > 39)
+    // ADC1 ranges differ by chip: GPIO32-39 on the original ESP32,
+    // GPIO1-10 on the ESP32-S3.  Warn only when the pin is outside
+    // both, which is a near-certain wiring mistake.
+    if (!((_pin >= 32 && _pin <= 39) || (_pin >= 1 && _pin <= 10)))
       Serial.printf(
-          "[Pin] WARNING: %s on GPIO%u is not an ADC1 pin "
-          "(32-39) — analogRead fails while WiFi is on\n",
+          "[Pin] WARNING: %s on GPIO%u may not be an ADC1 pin "
+          "— analogRead can fail while WiFi is on\n",
           name(), _pin);
     // MAX4466 outputs centered around ~1.65 V with ±0.5 V swing on
     // loud audio — we need the full 0-3.3 V ADC range or the signal

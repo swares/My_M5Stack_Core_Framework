@@ -15,7 +15,8 @@
 //
 //  ── Wiring ───────────────────────────────────────────────────
 //      fw.addPlugin(new PinDevice_MQ(36, PinDevice_MQ::MQ2));
-//  • adcPin MUST be an ADC1 pin (GPIO 32-39) — ADC2 fails with
+//  • adcPin MUST be an ADC1 pin (ESP32: GPIO 32-39, ESP32-S3:
+//    GPIO 1-10) — ADC2 fails with
 //    WiFi on.  beginPins() warns otherwise.
 //  • A bare MQ breakout runs its element at 5 V and AOUT can swing
 //    to ~5 V — over the ESP32 ADC's 3.3 V limit.  Wire AOUT through
@@ -58,7 +59,7 @@ class PinDevice_MQ : public IPinDevice {
     MQ135     // air quality — NH3, NOx, CO2, benzene, smoke
   };
 
-  // adcPin       — ADC1 pin (GPIO 32-39) on the module's AOUT
+  // adcPin       — ADC1 pin (ESP32: 32-39, ESP32-S3: 1-10) on the module's AOUT
   // model        — which MQ sensor
   // warmupSec    — preheat seconds before readings are trusted
   // vcVolts      — heater/loop supply voltage (5 V typical)
@@ -78,10 +79,13 @@ class PinDevice_MQ : public IPinDevice {
   const char* slug() const override { return _modelSlug(_model); }
 
   bool beginPins() override {
-    if (_pin < 32 || _pin > 39)
+    // ADC1 ranges differ by chip: GPIO32-39 on the original ESP32,
+    // GPIO1-10 on the ESP32-S3.  Warn only when the pin is outside
+    // both, which is a near-certain wiring mistake.
+    if (!((_pin >= 32 && _pin <= 39) || (_pin >= 1 && _pin <= 10)))
       Serial.printf(
-          "[Pin] WARNING: %s on GPIO%u is not an ADC1 pin "
-          "(32-39) — analogRead fails while WiFi is on\n",
+          "[Pin] WARNING: %s on GPIO%u may not be an ADC1 pin "
+          "— analogRead can fail while WiFi is on\n",
           name(), _pin);
     analogSetPinAttenuation(_pin, ADC_11db);  // full 0-3.3 V range
     _startMs = millis();                      // warmup clock

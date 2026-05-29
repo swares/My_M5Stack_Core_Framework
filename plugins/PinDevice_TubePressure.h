@@ -15,8 +15,9 @@
 //      fw.addPlugin(new PinDevice_TubePressure());      // default 36
 //      fw.addPlugin(new PinDevice_TubePressure(36));    // explicit
 //
-//  ⚠ The pin MUST be an ADC1 pin (GPIO 32-39) — ADC2 pins fail
-//  while WiFi is on.  beginPins() warns on a non-ADC1 pin.
+//  ⚠ The pin MUST be an ADC1 pin (ESP32: GPIO 32-39, ESP32-S3:
+//  GPIO 1-10) — ADC2 pins fail while WiFi is on.  beginPins() warns
+//  on a non-ADC1 pin.
 //
 //  Readings:  pressure   — kPa (range -100..200), zero-corrected.
 //             millivolts — raw sensor output in mV (diagnostics).
@@ -48,10 +49,13 @@ class PinDevice_TubePressure : public IPinDevice {
   const char* slug() const override { return "tubepress"; }
 
   bool beginPins() override {
-    if (_pin < 32 || _pin > 39)
+    // ADC1 ranges differ by chip: GPIO32-39 on the original ESP32,
+    // GPIO1-10 on the ESP32-S3.  Warn only when the pin is outside
+    // both, which is a near-certain wiring mistake.
+    if (!((_pin >= 32 && _pin <= 39) || (_pin >= 1 && _pin <= 10)))
       Serial.printf(
-          "[Pin] WARNING: %s on GPIO%u is not an ADC1 pin "
-          "(32-39) — analogRead fails while WiFi is on\n",
+          "[Pin] WARNING: %s on GPIO%u may not be an ADC1 pin "
+          "— analogRead can fail while WiFi is on\n",
           name(), _pin);
     analogSetPinAttenuation(_pin, ADC_11db);  // full 0-3.3V range
     return true;

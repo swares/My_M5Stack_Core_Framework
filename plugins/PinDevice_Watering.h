@@ -7,8 +7,9 @@
 //  a GPIO pin that switches the pump:
 //      fw.addPlugin(new PinDevice_Watering(/*moisture=*/36, /*pump=*/26));
 //
-//  ⚠ The moisture pin MUST be an ADC1 pin (GPIO 32-39) — ADC2 pins
-//  fail while WiFi is on.  beginPins() warns on a non-ADC1 pin.
+//  ⚠ The moisture pin MUST be an ADC1 pin (ESP32: GPIO 32-39,
+//  ESP32-S3: GPIO 1-10) — ADC2 pins fail while WiFi is on.
+//  beginPins() warns on a non-ADC1 pin.
 //
 //  CONTROLLABLE — Web API only:
 //    GET /api/watering/set?pump=0|1    pump off / on
@@ -29,10 +30,13 @@ class PinDevice_Watering : public IPinDevice {
   bool beginPins() override {
     pinMode(_pPin, OUTPUT);
     digitalWrite(_pPin, LOW);  // pump off at boot
-    if (_aPin < 32 || _aPin > 39)
+    // ADC1 ranges differ by chip: GPIO32-39 on the original ESP32,
+    // GPIO1-10 on the ESP32-S3.  Warn only when the pin is outside
+    // both, which is a near-certain wiring mistake.
+    if (!((_aPin >= 32 && _aPin <= 39) || (_aPin >= 1 && _aPin <= 10)))
       Serial.printf(
-          "[Pin] WARNING: %s moisture pin GPIO%u is not an "
-          "ADC1 pin (32-39) — analogRead fails with WiFi on\n",
+          "[Pin] WARNING: %s moisture pin GPIO%u may not be an "
+          "ADC1 pin — analogRead can fail with WiFi on\n",
           name(), _aPin);
     return true;
   }

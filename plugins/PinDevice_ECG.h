@@ -19,7 +19,8 @@
 //      // adcPin, then optional LO+ / LO- pins  (-1 = not wired)
 //      fw.addPlugin(new PinDevice_ECG(36, 26, 25));
 //
-//  ⚠ adcPin MUST be an ADC1 pin (GPIO 32-39) — ADC2 fails while
+//  ⚠ adcPin MUST be an ADC1 pin (ESP32: GPIO 32-39, ESP32-S3:
+//  GPIO 1-10) — ADC2 fails while
 //  WiFi is on.  The exact M-Bus GPIOs the ECG Module routes its
 //  OUTPUT / LO+ / LO- signals to depend on the module and how it
 //  is stacked, so pass the pins you actually wired.  Pass -1 for a
@@ -44,10 +45,13 @@ class PinDevice_ECG : public IPinDevice {
   bool wantsFastPoll() const override { return true; }
 
   bool beginPins() override {
-    if (_pin < 32 || _pin > 39)
+    // ADC1 ranges differ by chip: GPIO32-39 on the original ESP32,
+    // GPIO1-10 on the ESP32-S3.  Warn only when the pin is outside
+    // both, which is a near-certain wiring mistake.
+    if (!((_pin >= 32 && _pin <= 39) || (_pin >= 1 && _pin <= 10)))
       Serial.printf(
-          "[Pin] WARNING: %s on GPIO%u is not an ADC1 pin "
-          "(32-39) — analogRead fails while WiFi is on\n",
+          "[Pin] WARNING: %s on GPIO%u may not be an ADC1 pin "
+          "— analogRead can fail while WiFi is on\n",
           name(), _pin);
     if (_loP >= 0)
       pinMode(static_cast<uint8_t>(_loP), INPUT);

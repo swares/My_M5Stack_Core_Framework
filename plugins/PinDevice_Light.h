@@ -6,10 +6,11 @@
 //  ADC-capable Grove port and pass the analog pin:
 //      fw.addPlugin(new PinDevice_Light(36));
 //
-//  ⚠ The pin MUST be an ADC1 pin (GPIO 32-39).  ADC2 pins do not
-//  work with analogRead() while WiFi is connected, and this
-//  framework keeps WiFi up — beginPins() warns on a non-ADC1 pin.
-//  GPIO 36 / 39 are input-only ADC1 pins and ideal here.
+//  ⚠ The pin MUST be an ADC1 pin (ESP32: GPIO 32-39, ESP32-S3:
+//  GPIO 1-10).  ADC2 pins do not work with analogRead() while WiFi
+//  is connected, and this framework keeps WiFi up — beginPins()
+//  warns on a non-ADC1 pin.  On the classic ESP32, GPIO 36 / 39 are
+//  input-only ADC1 pins and ideal here.
 //
 //  Readings:  light_raw (0-4095), light_pct (0-100, relative).
 //  The slug is "cds" so it never clashes with an I2C light plugin.
@@ -24,10 +25,13 @@ class PinDevice_Light : public IPinDevice {
   const char* slug() const override { return "cds"; }
 
   bool beginPins() override {
-    if (_pin < 32 || _pin > 39)
+    // ADC1 ranges differ by chip: GPIO32-39 on the original ESP32,
+    // GPIO1-10 on the ESP32-S3.  Warn only when the pin is outside
+    // both, which is a near-certain wiring mistake.
+    if (!((_pin >= 32 && _pin <= 39) || (_pin >= 1 && _pin <= 10)))
       Serial.printf(
-          "[Pin] WARNING: %s on GPIO%u is not an ADC1 pin "
-          "(32-39) — analogRead fails while WiFi is on\n",
+          "[Pin] WARNING: %s on GPIO%u may not be an ADC1 pin "
+          "— analogRead can fail while WiFi is on\n",
           name(), _pin);
     return true;
   }
