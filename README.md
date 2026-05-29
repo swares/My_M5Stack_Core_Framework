@@ -677,6 +677,7 @@ I2C scan.
 | `PinDevice_Light.h`  | Light (CdS)        | ADC           | `(adcPin)`               | `light_raw`, `light_pct`       | — |
 | `PinDevice_Earth.h`  | Earth (soil)       | ADC + GPIO    | `(analogPin, digitalPin)`| `moisture_raw/_pct`, `dry`     | — |
 | `PinDevice_Mic.h`    | Mic (analog)       | ADC           | `(adcPin)`               | `level`, `level_pct`           | — |
+| `PinDevice_Angle.h`  | Angle (rotary pot) | ADC           | `(adcPin)`               | `raw`, `pct`, `angle`          | — |
 | `PinDevice_DS18B20.h`| DS18B20 temp       | 1-Wire        | `(pin)`                  | `temp` (°C)                    | — |
 | `PinDevice_IR.h`     | IR (Tx/Rx)         | IR GPIO       | `(rxPin, txPin)`         | `rx_count`, `last_bits`        | ✅ `send` |
 | `PinDevice_ECG.h`    | ECG (AD8232)       | ADC + GPIO    | `(adcPin[, loPlus, loMinus])` | `signal`, `leads_off`     | — |
@@ -690,18 +691,27 @@ I2C scan.
 | `PinDevice_Motor.h`       | DC Motor / Fan  | PWM (LEDC)    | `(signalPin)`            | `speed` (%), `running`         | ✅ `speed` |
 | `PinDevice_Watering.h`    | Watering Unit   | ADC + GPIO out| `(moisturePin, pumpPin)` | `moisture_raw/_pct`, `pump`    | ✅ `pump` |
 | `PinDevice_MQ.h`          | MQ-series gas   | ADC           | `(adcPin, model[, warmupSec, vc, rl, divRatio])` | `sensor_v`, `rs`, `warming` | — |
+| `PinDevice_Cotech.h`      | Cotech 36-7959 weather | 433 MHz OOK RF | `(rxPin)` | `temp_c`, `humidity`, `wind_mps`, `gust_mps`, `wind_dir`, `rain_mm`, `uv`, `light_lux` | ✅ `pair` |
 
 `PinDevice_Relay` is the device for any plain on/off output unit —
 a Flashlight, the Solid-State Relay units, or a laser emitter all
 plug into it; `PinDevice_Button` likewise covers a laser receiver
 or any bare digital-input unit.
 
-The last six are **Port-B units** — they plug into the single Port-B
-Grove connector (`GPIO26` Yellow + `GPIO36` White on an M5Stack Core),
-so their constructor pins default to `26`/`36` and can be called with
-no arguments.  Because Port B is one physical connector, only one of
-the six can be plugged in at a time; the `.ino` registers them as a
-commented block where you uncomment exactly one.
+Many of these are **Port-B units** — they plug into the single Port-B
+Grove connector.  On the classic Core / Core2 that connector is
+`GPIO26` Yellow + `GPIO36` White; on the **CoreS3 it is `G8` White +
+`G9` Yellow**.  The no-argument constructors default to the Core/Core2
+pins (`26`/`36`), so on a CoreS3 pass the actual pins (e.g.
+`PinDevice_Light(8)`).  Because Port B is one physical connector, only
+one Port-B unit can be plugged in at a time; the `.ino` registers them
+as a commented block where you uncomment exactly one.
+
+`PinDevice_Cotech` is the odd one out — it is a 433.92 MHz OOK radio
+receiver for the Cotech 36-7959 family of outdoor weather stations
+(and Sainlogic / SwitchDoc / uctech clones).  Wire any 433 MHz OOK
+receiver's DATA line to a free input-capable GPIO and pass it as
+`rxPin`; it is not tied to Port B.
 
 `PinDevice_DS18B20` and `PinDevice_IR` need external libraries —
 **OneWire + DallasTemperature** and **IRremoteESP8266** respectively
@@ -716,7 +726,8 @@ Register them in `setup()` (a commented example block is in the
 ```cpp
 fw.addPlugin(new PinDevice_PIR(36));         // motion in
 fw.addPlugin(new PinDevice_Servo(26));       // PWM servo
-fw.addPlugin(new PinDevice_Light(36));       // CdS on an ADC1 pin
+fw.addPlugin(new PinDevice_Light(36));       // CdS on an ADC1 pin (Core/Core2)
+fw.addPlugin(new PinDevice_Light(8));        // same, on CoreS3 Port-B White (G8)
 ```
 
 Key differences from an I2C plugin:
@@ -727,10 +738,14 @@ Key differences from an I2C plugin:
 - **One device per Grove port.** Port-A is I2C; Port-B is a GPIO/ADC
   pair, Port-C a UART pair.  There is no bus and no hub for these.
 - **ADC1 only.** While WiFi is connected — which this framework keeps
-  up — only ADC1 pins (**GPIO 32-39**) work for `analogRead()`; ADC2
-  pins silently fail.  The Light and Earth devices warn at boot if
-  given a non-ADC1 pin.  GPIO 36 and 39 are input-only ADC1 pins and
-  are ideal for the analog sensors.
+  up — only ADC1 pins work for `analogRead()`; ADC2 pins silently
+  fail.  The ADC1 range depends on the chip: **GPIO 32-39 on the
+  classic ESP32 (Core / Core2)** and **GPIO 1-10 on the ESP32-S3
+  (CoreS3)** — so the CoreS3's Port-B White pin, **G8**, is a valid
+  ADC1 pin.  Every analog pin device (Light, Earth, Angle, Mic, ECG,
+  MQ, TubePressure, Watering, Grove2Grove) warns at boot if given a
+  pin outside both ranges.  On the classic ESP32, GPIO 36 and 39 are
+  input-only ADC1 pins and are ideal for analog sensors.
 - **Avoid reserved pins** — GPIO 21/22 (Port-A I2C) and the LCD / SD
   SPI pins.
 
@@ -1575,6 +1590,23 @@ M5Stack_I2C_Framework/
     `WiFi.softAPIP()` in AP mode — so the address that previously
     appeared only on the 3-second boot splash now stays on screen
     on every panel and the ticker.
+54. **Chip-aware ADC1 pin validation** — the boot-time "not an ADC1
+    pin" warning in the analog Port-B devices used to hard-code the
+    classic ESP32 range (GPIO 32-39), so on the CoreS3 (ESP32-S3) a
+    correctly-wired Port-B White pin, **G8**, falsely tripped it.
+    Every analog pin device (Light, Earth, Angle, Mic, ECG, MQ,
+    TubePressure, Watering, Grove2Grove) now accepts both ranges —
+    GPIO 32-39 on the ESP32 and GPIO 1-10 on the ESP32-S3 — and only
+    warns when the pin is outside both, a near-certain wiring mistake.
+55. **`PinDevice_Angle`** — the classic Angle Unit (U016, a rotary
+    potentiometer on a single ADC line; not the I2C variant at 0x36).
+    Reports `raw` (0-4095), `pct` (0-100 %) and `angle` (mapped onto a
+    configurable `SWEEP_DEG`, default 300°).
+56. **`PinDevice_Cotech`** — a 433.92 MHz OOK + Manchester receiver
+    for the Cotech 36-7959 8-in-1 weather station and its Sainlogic /
+    SwitchDoc / uctech clones.  Decodes the 112-bit frame (CRC8) into
+    temperature, humidity, wind speed / gust / direction, rainfall,
+    UV and light, with a `pair` control to lock onto one sensor ID.
 
 ---
 

@@ -141,10 +141,13 @@
 #include "plugins/PinDevice_Motor.h"    // DC Motor / Vibration / Mini Fan — PWM
 #include "plugins/PinDevice_Watering.h" // Watering Unit — moisture + pump
 #include "plugins/PinDevice_MQ.h"      // MQ-series gas sensors (analog ADC)
-//  Port-B units (M5Stack Core Port-B = GPIO26 Yellow + GPIO36 White).
-//  Plain GPIO/ADC, no extra libraries.  Port B is a SINGLE physical
-//  connector, so only one of these can be plugged in at a time.
-#include "plugins/PinDevice_Cotech.h" // Weather Station
+//  433.92 MHz OOK RF receiver — DATA on any free input-capable GPIO,
+//  NOT a Port-B unit (no Grove pin defaults).
+#include "plugins/PinDevice_Cotech.h" // Cotech 36-7959 weather station
+//  Port-B units (Core/Core2 Port-B = GPIO26 Yellow + GPIO36 White;
+//  CoreS3 Port-B = G8 White + G9 Yellow).  Plain GPIO/ADC, no extra
+//  libraries.  Port B is a SINGLE physical connector, so only one of
+//  these can be plugged in at a time.
 #include "plugins/PinDevice_Hall.h"
 #include "plugins/PinDevice_Limit.h"
 #include "plugins/PinDevice_OP180.h"
@@ -298,17 +301,18 @@ void setup() {
   // fw.addPlugin(new PinDevice_IR(36, 26));         // IR rx,tx
 
   // ── Port-B units (optional — register at most ONE) ───────
-  //  Port B is a SINGLE connector (Yellow=GPIO26, White=GPIO36),
-  //  so uncomment AT MOST ONE line below — they all share the same
-  //  two pins.  Default pins are baked in; the framework trusts the
-  //  registration, so the one you uncomment must match whatever is
-  //  physically plugged into Port B.
-  // fw.addPlugin(new PinDevice_Hall(8));             // hall magnet switch — G36
-  // fw.addPlugin(new PinDevice_Limit(8));            // mechanical limit switch — G36
-  // fw.addPlugin(new PinDevice_OP180(8));            // IR break-beam switch — G36
-  // fw.addPlugin(new PinDevice_DualButton(9,8));       // two push-buttons — G26 + G36
-  // fw.addPlugin(new PinDevice_TubePressure(8));     // gas pressure gauge — G36 (ADC)
-  // fw.addPlugin(new PinDevice_Grove2Grove(8,9));      // switched 5V out + current — G26 + G36
+  //  Port B is a SINGLE connector — Core/Core2: Yellow=GPIO26,
+  //  White=GPIO36; CoreS3: Yellow=G9, White=G8.  The examples below
+  //  use the CoreS3 pins.  Uncomment AT MOST ONE line — they all
+  //  share the same two pins.  The framework trusts the registration,
+  //  so the one you uncomment must match whatever is physically
+  //  plugged into Port B (and the pins your board actually uses).
+  // fw.addPlugin(new PinDevice_Hall(8));             // hall magnet switch — G8 White
+  // fw.addPlugin(new PinDevice_Limit(8));            // mechanical limit switch — G8 White
+  // fw.addPlugin(new PinDevice_OP180(8));            // IR break-beam switch — G8 White
+  // fw.addPlugin(new PinDevice_DualButton(9,8));       // two push-buttons — G9 + G8
+  // fw.addPlugin(new PinDevice_TubePressure(8));     // gas pressure gauge — G8 White (ADC)
+  // fw.addPlugin(new PinDevice_Grove2Grove(8,9));      // switched 5V out + current — G8 + G9
 #endif  // ENABLE_PIN_DEVICES
 
   // ── UART device (optional — register at most ONE) ────────
