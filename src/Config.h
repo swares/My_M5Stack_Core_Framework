@@ -508,3 +508,145 @@ PASTE THIS DEVICE'S PRIVATE KEY (xxxx-private.pem.key) HERE
 //    - reboot the device, or
 //    - hit GET /api/rescan via the web API (manual trigger that
 //      runs the same scan/bind logic the boot does).
+
+// ── Claude escalation: local→cloud router (NetDevice_Router) ──
+//  Settings for the NetDevice_Router plugin — the "router + voice"
+//  tier that makes this device the single chat entry point.  It
+//  classifies each turn on-device, answers trivial ones from the
+//  on-board Module LLM, and ESCALATES hard ones (anything that
+//  needs a filesystem, a shell, or multi-file reasoning) to an
+//  orchestrator running on another box — typically an Orange Pi —
+//  which fronts Claude Code.
+//
+//  This device never holds an Anthropic key in this mode: it only
+//  knows how to reach your orchestrator; the orchestrator owns
+//  Claude Code.  The chain is  this device → Pi → Claude Code.
+//
+//  To enable: install NetDevice_Router.h into plugins/, register it
+//  in the .ino AFTER the Module LLM (so the router can delegate to
+//  it), and point ROUTER_PI_* at your orchestrator's /delegate
+//  endpoint.  The orchestrator is expected to answer a streamed
+//  text/event-stream reply (data: {"delta":"..."} ... data: [DONE]).
+//
+//    fw.addPlugin(llm);                        // Module LLM first
+//    fw.addPlugin(new NetDevice_Router(llm));  // router second
+//
+//  Leave ROUTER_PI_HOST empty ("") to keep the plugin compiled in
+//  but inert — every turn is then answered locally and nothing is
+//  ever escalated.
+[[maybe_unused]] constexpr char     ROUTER_PI_HOST[] = "pi1.local";
+[[maybe_unused]] constexpr unsigned ROUTER_PI_PORT = 443;
+[[maybe_unused]] constexpr char     ROUTER_PI_PATH[] = "/delegate";
+// Bearer token the orchestrator checks (""=no Authorization header).
+[[maybe_unused]] constexpr char     ROUTER_BEARER[] = "";
+// TLS verification for the orchestrator connection.  A LAN box with
+// a self-signed cert → true (encrypt only, skip the cert check).
+// For a pinned CA, set false and add ROUTER_CA_CERT + setCACert()
+// in the plugin's beginPins(), mirroring the MQTT_CA_CERT pattern.
+#define ROUTER_TLS_INSECURE true
+// Abandon a reply only after this long with NO token at all — an
+// INACTIVITY timeout, not a total cap (a long answer that keeps
+// streaming stays healthy).  Matches the Module LLM's REPLY_IDLE_MS.
+[[maybe_unused]] constexpr unsigned long ROUTER_REPLY_IDLE_MS = 60000;
+// Ceiling on the in-RAM answer buffer (bytes).
+[[maybe_unused]] constexpr unsigned ROUTER_ANSWER_MAX = 4096;
+// Opening the outbound TLS socket to the Pi allocates a large mbedTLS
+// buffer.  If the dashboard's HTTPS server is mid-handshake on several
+// browser sockets at that instant, heap can be momentarily too
+// fragmented and connect() fails (the same condition behind the
+// dashboard's intermittent "SSL_new failed" log lines).  Retry a few
+// times with a short backoff so a transient burst doesn't drop an
+// escalation.  ROUTER_CONNECT_TRIES total attempts; ROUTER_CONNECT_
+// BACKOFF_MS is the gap, doubled each retry.
+[[maybe_unused]] constexpr unsigned ROUTER_CONNECT_TRIES = 3;
+[[maybe_unused]] constexpr unsigned ROUTER_CONNECT_BACKOFF_MS = 250;
+// If the on-board Module LLM is unavailable (e.g. it failed to load
+// at boot, or is wedged), a "local" turn would normally dead-end with
+// "[local LLM busy or unavailable]".  Turn this on to instead ESCALATE
+// those turns to the Pi orchestrator, so the device stays useful while
+// the local model is down.  Only helps if ROUTER_PI_HOST is set and the
+// Pi is up.  Off by default (a down local model fails the turn rather
+// than silently sending everything to the cloud).
+#define ROUTER_FALLBACK_ESCALATE false
+// The on-device escalation prefilter (the §02 heuristic).  A turn is
+// escalated if it matches any of these words, contains a path-like
+// "/", or names a source-file extension.  Comma-separated, lower
+// case; bias toward escalating — deflecting an easy turn is cheaper
+// than under-serving a hard one.  Edit freely to tune routing.
+[[maybe_unused]] constexpr char ROUTER_ESCALATE_KEYWORDS[] =
+    "refactor,debug,test,implement,rewrite,fix,build,run,compile,"
+    "grep,commit,deploy,stack trace,exception,migrate,function,class";
+
+// ── Optional 3rd route: direct Claude API from the router ─────
+//  By default the router is two-way: trivial → local Module LLM,
+//  hard → Pi orchestrator (Claude Code).  Turn ROUTER_DIRECT_API on
+//  to add a THIRD route for "smart text" turns — non-coding requests
+//  the 0.5B local model would botch but that need no repo (explain,
+//  summarise, draft, translate...).  These go straight to the
+//  Anthropic API via a NetDevice_ClaudeAPI plugin, skipping the Pi.
+//
+//  This is the "A + B together" shape (see the doc, §15).  Two cases
+//  earn it: (1) LATENCY/COST — a one-hop API answer beats spinning
+//  up the full Claude Code agent for a question that produces no
+//  diff; (2) RESILIENCE — smart-text answers keep working when the
+//  Pi is powered down.  The cost is a real one: enabling this means
+//  CLAUDE_API_KEY now lives in this device's flash (see that block).
+//  If you don't need to survive a Pi outage, prefer leaving this OFF
+//  and letting the Pi orchestrator own all cloud calls (no key here).
+//
+//  To enable: set this true, register a NetDevice_ClaudeAPI plugin,
+//  and pass it to the router as its 2nd constructor argument:
+//    auto* llm = new UartDevice_ModuleLLM(Serial2);
+//    auto* api = new NetDevice_ClaudeAPI();
+//    fw.addPlugin(llm); fw.addPlugin(api);
+//    fw.addPlugin(new NetDevice_Router(llm, api));
+#define ROUTER_DIRECT_API false
+// A non-coding turn is sent to the direct API (instead of the local
+// model) when it matches one of these words OR runs longer than
+// ROUTER_DIRECT_MIN_WORDS — i.e. it's too rich for the 0.5B but needs
+// no codebase.  Comma-separated, lower case.  Ignored unless
+// ROUTER_DIRECT_API is true.
+[[maybe_unused]] constexpr char ROUTER_DIRECT_KEYWORDS[] =
+    "explain,summarise,summarize,draft,translate,rewrite,brainstorm,"
+    "compare,outline,reword,paraphrase,why,how,what if";
+[[maybe_unused]] constexpr unsigned ROUTER_DIRECT_MIN_WORDS = 12;
+
+// ── Claude direct API (NetDevice_ClaudeAPI) ──────────────────
+//  Settings for the OPTIONAL NetDevice_ClaudeAPI plugin, which lets
+//  this device call the Anthropic Messages API directly over HTTPS —
+//  no orchestrator in between.
+//
+//  ⚠ MODEL, NOT AGENT.  This returns Claude the *model*: text in,
+//  text out ("explain this trace", "draft this regex").  It is NOT
+//  Claude *Code* — there is no filesystem, shell, git repo, or tool
+//  loop, because this device cannot host one.  Anything that must
+//  read or edit a codebase still has to go to Claude Code on the Pi
+//  via NetDevice_Router above.  Use this as the MIDDLE of a 3-way
+//  router (local model → Claude API → Claude Code), never the default.
+//
+//  ⚠ SECRET: CLAUDE_API_KEY is a real credential stored in firmware
+//  on a desk device whose flash can be read.  Scope the key as
+//  tightly as you can and rotate it if it leaks.  If the key matters,
+//  prefer routing through the Pi (which keeps it on a real machine).
+//  Keep Config.h out of public version control.
+//
+//  Leave CLAUDE_API_KEY empty ("") to keep the plugin compiled in
+//  but inert — it logs a warning at boot and answers every query
+//  with "[api key not set]" instead of calling out.
+[[maybe_unused]] constexpr char CLAUDE_API_KEY[] = "";
+// Model id.  A small, fast, cheap model suits a gadget; bump up only
+// if you need stronger text answers.
+[[maybe_unused]] constexpr char CLAUDE_MODEL[] = "claude-haiku-4-5";
+// Optional persona / instruction prepended to every query ("" = none).
+[[maybe_unused]] constexpr char CLAUDE_SYSTEM_PROMPT[] =
+    "You are a concise assistant answering from a small desk device. "
+    "Keep replies short and plain-text.";
+// Longest reply the model will generate.
+[[maybe_unused]] constexpr int CLAUDE_MAX_TOKENS = 512;
+// Inactivity timeout (ms) and answer-buffer ceiling (bytes), as above.
+[[maybe_unused]] constexpr unsigned long CLAUDE_REPLY_IDLE_MS = 30000;
+[[maybe_unused]] constexpr unsigned CLAUDE_ANSWER_MAX = 4096;
+// Anthropic API version header.  See docs.anthropic.com for the
+// current value; this rarely needs changing.
+[[maybe_unused]] constexpr char CLAUDE_API_VERSION[] = "2023-06-01";
+
