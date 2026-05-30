@@ -1,0 +1,2011 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Asking Claude Code for help — from a local LLM</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Geist:wght@400;500;600&family=Geist+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --paper:       #F4F1EA;
+    --paper-2:     #ECE7DC;
+    --ink:         #1A1715;
+    --ink-2:       #3A332E;
+    --muted:       #7A736B;
+    --rule:        #D6CFC1;
+    --rule-strong: #B7AE9C;
+    --rust:        #B8412C;   /* Ollama / local lane */
+    --rust-soft:   #E8C7BC;
+    --petrol:      #2A5C77;   /* Claude Code lane */
+    --petrol-soft: #BFD3DD;
+    --ochre:       #A56C18;   /* Orange Pi tier */
+    --ochre-soft:  #E6D2AE;
+    --user:        #4A453F;   /* User lane */
+    --user-soft:   #D6CFC1;
+    --code-bg:     #1B1815;
+    --code-fg:     #E6DFD0;
+    --code-mute:   #8A8378;
+    --code-acc:    #E08A6E;
+    --code-acc2:   #8AB6CA;
+  }
+
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    background: var(--paper);
+    color: var(--ink);
+    font-family: "Geist", -apple-system, system-ui, sans-serif;
+    font-size: 15.5px;
+    line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  .page {
+    max-width: 1180px;
+    margin: 0 auto;
+    padding: 80px 56px 120px;
+  }
+
+  /* ─── Typography ─────────────────────────────────────────── */
+  .eyebrow {
+    font-family: "Geist Mono", ui-monospace, monospace;
+    font-size: 11.5px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--muted);
+    font-weight: 500;
+  }
+  h1.display {
+    font-family: "Instrument Serif", "Iowan Old Style", Georgia, serif;
+    font-weight: 400;
+    font-size: clamp(44px, 6vw, 76px);
+    line-height: 1.02;
+    letter-spacing: -0.01em;
+    margin: 18px 0 22px;
+    max-width: 18ch;
+  }
+  h1.display em { font-style: italic; color: var(--rust); }
+  .lede {
+    font-family: "Instrument Serif", Georgia, serif;
+    font-size: clamp(20px, 1.7vw, 24px);
+    line-height: 1.45;
+    color: var(--ink-2);
+    max-width: 58ch;
+    margin: 0;
+  }
+
+  h2.section {
+    font-family: "Instrument Serif", Georgia, serif;
+    font-weight: 400;
+    font-size: clamp(30px, 3.4vw, 44px);
+    line-height: 1.08;
+    letter-spacing: -0.005em;
+    margin: 0 0 8px;
+    color: var(--ink);
+  }
+  h2.section .num {
+    font-family: "Geist Mono", monospace;
+    font-size: 0.32em;
+    letter-spacing: 0.16em;
+    color: var(--muted);
+    vertical-align: 0.9em;
+    margin-right: 14px;
+    font-weight: 500;
+  }
+  h3.sub {
+    font-family: "Geist", sans-serif;
+    font-weight: 600;
+    font-size: 14px;
+    letter-spacing: 0.02em;
+    margin: 0 0 10px;
+    color: var(--ink);
+  }
+  p { margin: 0 0 14px; max-width: 64ch; color: var(--ink-2); }
+  p.tight { margin-bottom: 6px; }
+  p .em { font-style: italic; font-family: "Instrument Serif", serif; font-size: 1.08em; color: var(--ink); }
+
+  /* ─── Layout primitives ─────────────────────────────────── */
+  section.block { margin-top: 96px; }
+  .head-row { display: flex; align-items: baseline; gap: 24px; margin-bottom: 28px; border-top: 1px solid var(--rule); padding-top: 20px; }
+  .head-row .tag {
+    font-family: "Geist Mono", monospace;
+    font-size: 11px; letter-spacing: 0.16em; text-transform: uppercase;
+    color: var(--muted);
+  }
+
+  .twocol { display: grid; grid-template-columns: 1fr 1fr; gap: 48px; align-items: start; }
+  .threecol { display: grid; grid-template-columns: repeat(3, 1fr); gap: 28px; }
+  .fourcol { display: grid; grid-template-columns: repeat(4, 1fr); gap: 18px; }
+
+  /* ─── Header / hero block ───────────────────────────────── */
+  header.hero {
+    border-top: 1px solid var(--ink);
+    padding-top: 28px;
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 60px;
+    align-items: end;
+  }
+  .hero-meta {
+    font-family: "Geist Mono", monospace;
+    font-size: 11px;
+    color: var(--muted);
+    letter-spacing: 0.04em;
+    text-align: right;
+    line-height: 1.7;
+    white-space: nowrap;
+  }
+  .hero-meta b { color: var(--ink); font-weight: 500; }
+  .hero-glyph { margin-top: 56px; }
+
+  /* ─── Code blocks ───────────────────────────────────────── */
+  pre.code, code.inline {
+    font-family: "Geist Mono", ui-monospace, monospace;
+    font-size: 12.5px;
+    line-height: 1.55;
+  }
+  code.inline {
+    background: var(--paper-2);
+    border: 1px solid var(--rule);
+    padding: 1px 6px;
+    border-radius: 3px;
+    font-size: 12px;
+    color: var(--ink);
+  }
+  pre.code {
+    background: var(--code-bg);
+    color: var(--code-fg);
+    padding: 18px 20px;
+    border-radius: 4px;
+    overflow-x: auto;
+    margin: 0;
+  }
+  pre.code .c  { color: var(--code-mute); font-style: italic; }
+  pre.code .k  { color: var(--code-acc); }
+  pre.code .s  { color: #D3B26B; }
+  pre.code .n  { color: var(--code-acc2); }
+  pre.code .p  { color: #C7A8E0; }
+  pre.code .m  { color: #8A8378; }
+  pre.code .lbl {
+    display: block;
+    background: transparent;
+    color: var(--code-mute);
+    font-size: 10.5px;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    border-bottom: 1px solid #2A2622;
+    padding: 0 0 10px;
+    margin: -2px 0 12px;
+  }
+
+  .code-card {
+    background: var(--code-bg);
+    border-radius: 4px;
+    padding: 18px 20px;
+  }
+  .code-card pre { padding: 0; background: transparent; }
+
+  /* ─── Mechanism cards ───────────────────────────────────── */
+  .mech {
+    border: 1px solid var(--rule);
+    background: var(--paper);
+    padding: 22px 22px 26px;
+    border-radius: 4px;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    min-width: 0;
+  }
+  .mech .head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 8px;
+    border-bottom: 1px solid var(--rule);
+    padding-bottom: 12px;
+  }
+  .mech .num {
+    font-family: "Geist Mono", monospace;
+    color: var(--muted);
+    font-size: 10.5px;
+    letter-spacing: 0.18em;
+  }
+  .mech h4 {
+    font-family: "Instrument Serif", Georgia, serif;
+    font-weight: 400;
+    font-size: 22px;
+    line-height: 1.1;
+    margin: 0;
+  }
+  .mech .summary { font-size: 13.5px; color: var(--ink-2); margin: 0; }
+  .mech pre.code { font-size: 11.5px; padding: 14px 16px; }
+  .mech dl { margin: 0; display: grid; grid-template-columns: 70px 1fr; gap: 6px 12px; font-size: 12.5px; }
+  .mech dl dt {
+    font-family: "Geist Mono", monospace;
+    color: var(--muted); font-size: 10.5px; letter-spacing: 0.12em; text-transform: uppercase;
+    padding-top: 2px;
+  }
+  .mech dl dd { margin: 0; color: var(--ink-2); }
+
+  /* ─── Misc bits ─────────────────────────────────────────── */
+  .pill {
+    display: inline-flex; align-items: center; gap: 6px;
+    border: 1px solid var(--rule-strong);
+    padding: 2px 9px;
+    border-radius: 999px;
+    font-family: "Geist Mono", monospace;
+    font-size: 10.5px;
+    letter-spacing: 0.08em;
+    color: var(--ink-2);
+    background: var(--paper);
+  }
+  .pill .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--ink); }
+  .pill.rust .dot { background: var(--rust); }
+  .pill.petrol .dot { background: var(--petrol); }
+  .pill.user .dot { background: var(--user); }
+
+  ul.bullets { list-style: none; padding: 0; margin: 0 0 14px; }
+  ul.bullets li {
+    padding-left: 22px;
+    position: relative;
+    margin-bottom: 8px;
+    color: var(--ink-2);
+    max-width: 64ch;
+  }
+  ul.bullets li::before {
+    content: "→";
+    position: absolute; left: 0; top: 0;
+    color: var(--rust);
+    font-family: "Geist Mono", monospace;
+  }
+
+  .figcap {
+    font-family: "Geist Mono", monospace;
+    font-size: 10.5px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin-top: 14px;
+  }
+  .figcap b { color: var(--ink); font-weight: 500; }
+
+  .callout {
+    border-left: 2px solid var(--rust);
+    padding: 4px 0 4px 16px;
+    margin: 18px 0;
+    font-family: "Instrument Serif", Georgia, serif;
+    font-size: 19px;
+    line-height: 1.4;
+    color: var(--ink);
+    max-width: 60ch;
+  }
+
+  /* SVG diagram styling */
+  svg .lane-label { font-family: "Geist Mono", monospace; font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase; }
+  svg .step-num { font-family: "Geist Mono", monospace; font-size: 10px; letter-spacing: 0.06em; fill: var(--muted); }
+  svg .step-text { font-family: "Geist", sans-serif; font-size: 12.5px; fill: var(--ink-2); }
+  svg .step-title { font-family: "Geist", sans-serif; font-size: 13px; font-weight: 600; fill: var(--ink); }
+  svg .ann { font-family: "Geist Mono", monospace; font-size: 10.5px; fill: var(--muted); }
+  svg .ann-i { font-family: "Instrument Serif", serif; font-size: 14px; font-style: italic; fill: var(--ink-2); }
+
+  /* model ranking rows */
+  .ranklist { display: flex; flex-direction: column; }
+  .rrow {
+    display: grid;
+    grid-template-columns: 26px 1fr auto;
+    gap: 4px 16px;
+    align-items: baseline;
+    padding: 14px 0;
+    border-top: 1px solid var(--rule);
+  }
+  .rrow:first-child { border-top: none; }
+  .rrank { font-family: "Geist Mono", monospace; font-size: 12px; color: var(--muted); }
+  .rname { font-family: "Geist Mono", monospace; font-size: 14px; color: var(--ink); font-weight: 500; }
+  .rname .sz { color: var(--muted); font-weight: 400; }
+  .rwhy { grid-column: 2 / 3; font-size: 13px; color: var(--ink-2); margin-top: 4px; max-width: 52ch; }
+  .rtag {
+    font-family: "Geist Mono", monospace;
+    font-size: 9.5px; letter-spacing: 0.12em; text-transform: uppercase;
+    padding: 3px 8px; border-radius: 999px; white-space: nowrap;
+    border: 1px solid var(--rule-strong); color: var(--ink-2);
+    align-self: center;
+  }
+  .rtag.pick { background: var(--rust); color: #F4F1EA; border-color: var(--rust); }
+  .rtag.pick.o { background: var(--ochre); border-color: var(--ochre); }
+  .rtag.alt  { background: var(--paper); color: var(--ink-2); }
+  .rtag.skip { background: var(--paper); color: var(--muted); border-style: dashed; }
+  .rmeta { grid-column: 2 / 3; display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
+  .chip {
+    font-family: "Geist Mono", monospace; font-size: 9.5px; letter-spacing: 0.08em;
+    text-transform: uppercase; color: var(--muted);
+    border: 1px solid var(--rule); border-radius: 3px; padding: 2px 6px;
+  }
+  .chip b { color: var(--ink); font-weight: 500; }
+
+  /* honest-accounting two-col */
+  .ledger { border: 1px solid var(--rule); border-radius: 4px; overflow: hidden; }
+  .ledger-col { padding: 26px 28px; }
+  .ledger-col h4 {
+    font-family: "Geist Mono", monospace; font-size: 11px; letter-spacing: 0.14em;
+    text-transform: uppercase; margin: 0 0 18px; font-weight: 500;
+  }
+  .ledger-col ul { list-style: none; padding: 0; margin: 0; }
+  .ledger-col li { padding: 12px 0; border-top: 1px solid var(--rule); font-size: 13.5px; color: var(--ink-2); }
+  .ledger-col li:first-child { border-top: none; }
+  .ledger-col li b { color: var(--ink); font-weight: 600; display: block; margin-bottom: 2px; font-size: 13px; }
+
+  /* price tier cards */
+  .ptier { border: 1px solid var(--rule); border-radius: 4px; padding: 24px 22px 26px; display: flex; flex-direction: column; min-width: 0; }
+  .ptier .ptier-lab { font-family: "Geist Mono", monospace; font-size: 10.5px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--muted); }
+  .ptier .ptier-name { font-family: "Instrument Serif", Georgia, serif; font-size: 24px; line-height: 1.1; margin: 6px 0 4px; }
+  .ptier .ptier-price { font-family: "Geist Mono", monospace; font-size: 22px; color: var(--ink); font-weight: 500; margin: 10px 0 2px; }
+  .ptier .ptier-price small { font-size: 12px; color: var(--muted); font-weight: 400; }
+  .ptier hr { border: none; border-top: 1px solid var(--rule); margin: 18px 0; }
+  .ptier dl { margin: 0; display: grid; grid-template-columns: 64px 1fr; gap: 8px 12px; font-size: 12.5px; }
+  .ptier dt { font-family: "Geist Mono", monospace; color: var(--muted); font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase; padding-top: 2px; }
+  .ptier dd { margin: 0; color: var(--ink-2); }
+  .ptier .verdict { margin-top: auto; padding-top: 18px; font-size: 13px; color: var(--ink); font-family: "Instrument Serif", serif; font-size: 16px; line-height: 1.35; }
+  .ptier.star { border-color: var(--ochre); border-width: 1.5px; }
+  .ptier.star .ptier-name { color: var(--ochre); }
+
+  /* effort table */
+  .erow { display: grid; grid-template-columns: 1.5fr auto 2fr; gap: 14px 22px; align-items: start; padding: 16px 0; border-top: 1px solid var(--rule); }
+  .erow:first-child { border-top: none; }
+  .ecomp { font-weight: 600; color: var(--ink); font-size: 14px; }
+  .ecomp small { display: block; font-weight: 400; color: var(--muted); font-family: "Geist Mono", monospace; font-size: 10.5px; letter-spacing: 0.04em; margin-top: 4px; line-height: 1.4; }
+  .epain { font-size: 13px; color: var(--ink-2); align-self: center; }
+  .ebadge { font-family: "Geist Mono", monospace; font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase; padding: 4px 9px; border-radius: 999px; white-space: nowrap; color: #F4F1EA; align-self: center; }
+  .ebadge.easy { background: #4F7A4A; }
+  .ebadge.mod  { background: var(--ochre); }
+  .ebadge.hard { background: var(--rust); }
+
+  /* footer */
+  footer.foot {
+    margin-top: 120px;
+    padding-top: 28px;
+    border-top: 1px solid var(--ink);
+    display: flex;
+    justify-content: space-between;
+    font-family: "Geist Mono", monospace;
+    font-size: 11px;
+    letter-spacing: 0.06em;
+    color: var(--muted);
+  }
+</style>
+</head>
+<body>
+<div class="page">
+
+<!-- ════════════════ HERO ════════════════ -->
+<header class="hero">
+  <div>
+    <div class="eyebrow">Pattern · Local-first chat with selective escalation</div>
+    <h1 class="display">Asking Claude&nbsp;Code <em>for&nbsp;help.</em></h1>
+    <p class="lede">A local model in Ollama handles ordinary chat on your machine. When a turn needs to read files, run commands, or reason across a codebase, it hands off — quietly, in the background — to Claude Code, then stitches the answer back into the conversation.</p>
+  </div>
+  <div class="hero-meta">
+    <div><b>FRONT-END</b> &nbsp;M5Stack CoreS3 · AX630C</div>
+    <div><b>BRAIN</b> &nbsp;2× Orange Pi 5 Pro · RK3588S</div>
+    <div><b>SPECIALIST</b> &nbsp;claude code (headless)</div>
+    <div style="margin-top:10px;">Three tiers · One chat surface</div>
+  </div>
+</header>
+
+<!-- ════════════════ §0 ACTORS ════════════════ -->
+<section class="block">
+  <div class="head-row">
+    <span class="tag">§ 00</span>
+    <span class="tag">The three actors</span>
+  </div>
+  <div class="twocol">
+    <div>
+      <h2 class="section"><span class="num">A</span>Who's in the room.</h2>
+      <p>One chat window, three minds behind it. The user never has to know where any given answer came from — that's the contract.</p>
+      <ul class="bullets">
+        <li><b>User</b> — types in a normal chat box, expects normal turn‑taking.</li>
+        <li><b>Ollama</b> — fast, cheap, on‑device. Owns the conversation: tone, memory, formatting, the decision of when to call for help.</li>
+        <li><b>Claude Code</b> — runs headless in the background. Has shell, filesystem, and stronger reasoning. Returns a transcript or a structured result.</li>
+      </ul>
+      <div class="callout">Ollama is the host. Claude Code is the specialist on call. The user only ever talks to the host.</div>
+    </div>
+    <svg viewBox="0 0 540 360" width="100%" height="auto" aria-hidden="true">
+      <!-- user -->
+      <circle cx="80" cy="180" r="36" fill="none" stroke="var(--user)" stroke-width="1.5"/>
+      <text x="80" y="184" text-anchor="middle" class="lane-label" fill="var(--user)">USER</text>
+      <text x="80" y="240" text-anchor="middle" class="ann">one chat surface</text>
+
+      <!-- ollama -->
+      <rect x="200" y="120" width="140" height="120" fill="none" stroke="var(--rust)" stroke-width="1.5"/>
+      <text x="270" y="155" text-anchor="middle" class="lane-label" fill="var(--rust)">OLLAMA</text>
+      <text x="270" y="178" text-anchor="middle" class="step-text">host model</text>
+      <text x="270" y="196" text-anchor="middle" class="step-text">local · fast · cheap</text>
+      <text x="270" y="218" text-anchor="middle" class="ann">router + voice</text>
+
+      <!-- claude -->
+      <rect x="400" y="100" width="120" height="160" fill="none" stroke="var(--petrol)" stroke-width="1.5" stroke-dasharray="3 4"/>
+      <text x="460" y="135" text-anchor="middle" class="lane-label" fill="var(--petrol)">CLAUDE</text>
+      <text x="460" y="152" text-anchor="middle" class="lane-label" fill="var(--petrol)">CODE</text>
+      <text x="460" y="178" text-anchor="middle" class="step-text">headless</text>
+      <text x="460" y="196" text-anchor="middle" class="step-text">tools · shell · fs</text>
+      <text x="460" y="222" text-anchor="middle" class="ann">specialist</text>
+      <text x="460" y="238" text-anchor="middle" class="ann">on call</text>
+
+      <!-- arrows -->
+      <g stroke="var(--ink-2)" stroke-width="1" fill="none">
+        <path d="M118 180 L198 180" marker-end="url(#arr)"/>
+        <path d="M198 192 L118 192" marker-end="url(#arr)"/>
+        <path d="M342 158 L398 138" marker-end="url(#arr)"/>
+        <path d="M398 222 L342 202" marker-end="url(#arr)"/>
+      </g>
+
+      <text x="158" y="172" class="ann">ask</text>
+      <text x="148" y="206" class="ann">reply</text>
+      <text x="350" y="135" class="ann">escalate</text>
+      <text x="350" y="232" class="ann">result</text>
+
+      <!-- dashed background frame "your machine" -->
+      <rect x="40" y="60" width="360" height="240" rx="2" fill="none" stroke="var(--rule-strong)" stroke-dasharray="2 4"/>
+      <text x="48" y="78" class="ann">YOUR MACHINE</text>
+      <text x="412" y="78" class="ann">ANTHROPIC API</text>
+
+      <defs>
+        <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+          <path d="M0,0 L10,5 L0,10 z" fill="var(--ink-2)"/>
+        </marker>
+      </defs>
+    </svg>
+  </div>
+</section>
+
+<!-- ════════════════ §1 LIFECYCLE ════════════════ -->
+<section class="block">
+  <div class="head-row">
+    <span class="tag">§ 01</span>
+    <span class="tag">Lifecycle of one escalated turn</span>
+  </div>
+  <h2 class="section" style="max-width:24ch;"><span class="num">B</span>From a chat message to a Claude&nbsp;Code answer, and back.</h2>
+  <p style="max-width:62ch;">Read this as a swimlane: time flows left to right, lanes are the actors, numbered blocks are the steps of a single user turn. Steps&nbsp;1–3 happen on‑device in milliseconds; step&nbsp;4 is the long one.</p>
+
+  <div style="margin-top:32px; padding: 28px 12px 18px; background: var(--paper-2); border-radius: 4px;">
+    <svg viewBox="0 0 1100 460" width="100%" height="auto" aria-hidden="true">
+      <!-- lane backgrounds -->
+      <g>
+        <rect x="0" y="40" width="1100" height="110" fill="#EFE9DC"/>
+        <rect x="0" y="170" width="1100" height="140" fill="#F1E4DE"/>
+        <rect x="0" y="330" width="1100" height="110" fill="#DEE7EC"/>
+      </g>
+      <!-- lane labels -->
+      <text x="14" y="58" class="lane-label" fill="var(--user)">USER</text>
+      <text x="14" y="188" class="lane-label" fill="var(--rust)">OLLAMA</text>
+      <text x="14" y="348" class="lane-label" fill="var(--petrol)">CLAUDE&nbsp;CODE</text>
+
+      <!-- timeline ticks -->
+      <g stroke="var(--rule-strong)" stroke-width="1" stroke-dasharray="2 5">
+        <line x1="160" y1="30" x2="160" y2="450"/>
+        <line x1="320" y1="30" x2="320" y2="450"/>
+        <line x1="500" y1="30" x2="500" y2="450"/>
+        <line x1="740" y1="30" x2="740" y2="450"/>
+        <line x1="920" y1="30" x2="920" y2="450"/>
+      </g>
+      <g class="step-num" text-anchor="middle">
+        <text x="160" y="22">t0</text>
+        <text x="320" y="22">+50ms</text>
+        <text x="500" y="22">+200ms</text>
+        <text x="740" y="22">+3-30s</text>
+        <text x="920" y="22">+stream</text>
+      </g>
+
+      <!-- 1. User asks -->
+      <g>
+        <rect x="90" y="70" width="140" height="60" rx="3" fill="white" stroke="var(--user)" stroke-width="1.2"/>
+        <text x="100" y="88" class="step-num">01</text>
+        <text x="100" y="104" class="step-title">User asks.</text>
+        <text x="100" y="121" class="step-text">“Refactor auth/”</text>
+      </g>
+
+      <!-- arrow down to ollama -->
+      <path d="M160 130 L160 175" stroke="var(--user)" stroke-width="1.2" fill="none" marker-end="url(#arrU)"/>
+
+      <!-- 2. Classify -->
+      <g>
+        <rect x="250" y="200" width="140" height="80" rx="3" fill="white" stroke="var(--rust)" stroke-width="1.2"/>
+        <text x="260" y="218" class="step-num">02</text>
+        <text x="260" y="234" class="step-title">Classify.</text>
+        <text x="260" y="252" class="step-text">Can I handle this</text>
+        <text x="260" y="268" class="step-text">in‑house?</text>
+      </g>
+      <text x="320" y="298" class="ann-i" text-anchor="middle">no — needs fs + tools</text>
+
+      <!-- 3. Pack context -->
+      <g>
+        <rect x="430" y="200" width="140" height="80" rx="3" fill="white" stroke="var(--rust)" stroke-width="1.2"/>
+        <text x="440" y="218" class="step-num">03</text>
+        <text x="440" y="234" class="step-title">Pack context.</text>
+        <text x="440" y="252" class="step-text">goal + workdir +</text>
+        <text x="440" y="268" class="step-text">conv summary</text>
+      </g>
+
+      <!-- arrow ollama → claude -->
+      <path d="M500 285 L500 330" stroke="var(--rust)" stroke-width="1.2" fill="none" marker-end="url(#arrR)"/>
+      <text x="510" y="312" class="ann">spawn / call</text>
+
+      <!-- 4. Claude works -->
+      <g>
+        <rect x="650" y="350" width="200" height="76" rx="3" fill="white" stroke="var(--petrol)" stroke-width="1.2"/>
+        <text x="660" y="368" class="step-num">04</text>
+        <text x="660" y="384" class="step-title">Read · plan · edit · test.</text>
+        <text x="660" y="402" class="step-text">tool loop on the repo</text>
+        <text x="660" y="418" class="step-text">streams stdout (JSON)</text>
+      </g>
+
+      <!-- 5. Stream back: paraphrase -->
+      <g>
+        <rect x="860" y="200" width="160" height="80" rx="3" fill="white" stroke="var(--rust)" stroke-width="1.2" stroke-dasharray="3 3"/>
+        <text x="870" y="218" class="step-num">05</text>
+        <text x="870" y="234" class="step-title">Paraphrase progress.</text>
+        <text x="870" y="252" class="step-text">“Reading 4 files…”</text>
+        <text x="870" y="268" class="step-text">“Writing tests…”</text>
+      </g>
+      <path d="M860 388 L940 388 L940 285" stroke="var(--petrol)" stroke-width="1.2" fill="none" marker-end="url(#arrP)"/>
+      <text x="950" y="320" class="ann">stream-json</text>
+
+      <!-- 6. Final answer to user -->
+      <g>
+        <rect x="900" y="70" width="180" height="60" rx="3" fill="white" stroke="var(--user)" stroke-width="1.2"/>
+        <text x="910" y="88" class="step-num">06</text>
+        <text x="910" y="104" class="step-title">User reads diff + summary.</text>
+        <text x="910" y="121" class="step-text">in the same chat window</text>
+      </g>
+      <path d="M940 200 L940 130" stroke="var(--rust)" stroke-width="1.2" fill="none" marker-end="url(#arrU)"/>
+
+      <defs>
+        <marker id="arrU" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="var(--user)"/></marker>
+        <marker id="arrR" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="var(--rust)"/></marker>
+        <marker id="arrP" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="var(--petrol)"/></marker>
+      </defs>
+    </svg>
+    <div class="figcap"><b>Fig. B</b> &nbsp;·&nbsp; one user turn, six steps, three lanes</div>
+  </div>
+</section>
+
+<!-- ════════════════ §2 DECIDING TO ESCALATE ════════════════ -->
+<section class="block">
+  <div class="head-row">
+    <span class="tag">§ 02</span>
+    <span class="tag">The escalation decision</span>
+  </div>
+  <h2 class="section" style="max-width:22ch;"><span class="num">C</span>How Ollama knows it's out of its depth.</h2>
+  <p>Two strategies, used together in practice. The cheap one runs first; the expensive one — Ollama itself — only fires if the heuristic is ambiguous.</p>
+
+  <div class="twocol" style="margin-top: 32px; gap: 36px;">
+    <!-- Heuristic -->
+    <div>
+      <div style="display:flex; align-items:center; gap:10px; margin-bottom: 10px;">
+        <span class="pill rust"><span class="dot"></span>STRATEGY A</span>
+        <span style="font-family:Geist Mono,monospace;font-size:11px;color:var(--muted);">cheap · ~0 ms</span>
+      </div>
+      <h3 class="sub" style="font-size:17px; margin-bottom: 6px;">Heuristic prefilter</h3>
+      <p class="tight">Regex / keyword pass on the incoming message. Fast, dumb, conservative — biased toward escalating, because escalating something easy is cheaper than missing something hard.</p>
+      <pre class="code"><span class="lbl">router/heuristic.py</span><span class="k">def</span> <span class="n">needs_claude</span>(msg, ctx):
+    <span class="c"># obvious tells</span>
+    <span class="k">if</span> ctx.attached_files: <span class="k">return</span> <span class="p">True</span>
+    <span class="k">if</span> re.search(<span class="s">r"\b(refactor|rewrite|debug|test|run|grep)\b"</span>, msg, re.I):
+        <span class="k">return</span> <span class="p">True</span>
+    <span class="k">if</span> re.search(<span class="s">r"\.(py|ts|tsx|go|rs|java|sql)\b"</span>, msg):
+        <span class="k">return</span> <span class="p">True</span>
+    <span class="k">if</span> re.search(<span class="s">r"[/~]\S+/"</span>, msg):  <span class="c"># paths</span>
+        <span class="k">return</span> <span class="p">True</span>
+    <span class="k">return</span> <span class="p">None</span>  <span class="c"># inconclusive → ask the model</span></pre>
+    </div>
+
+    <!-- Tool-call -->
+    <div>
+      <div style="display:flex; align-items:center; gap:10px; margin-bottom: 10px;">
+        <span class="pill rust"><span class="dot"></span>STRATEGY B</span>
+        <span style="font-family:Geist Mono,monospace;font-size:11px;color:var(--muted);">model-judged · 1 token</span>
+      </div>
+      <h3 class="sub" style="font-size:17px; margin-bottom: 6px;">Ollama as the router</h3>
+      <p class="tight">Expose <code class="inline">escalate_to_claude_code</code> as a tool. Ollama either answers itself, or emits a tool call whose arguments <em>are</em> the handoff payload. No separate classifier needed.</p>
+      <pre class="code"><span class="lbl">tools/escalate.json</span>{
+  <span class="n">"type"</span>: <span class="s">"function"</span>,
+  <span class="n">"function"</span>: {
+    <span class="n">"name"</span>: <span class="s">"escalate_to_claude_code"</span>,
+    <span class="n">"description"</span>: <span class="s">"Hand off to Claude Code when the task</span>
+<span class="s">      needs filesystem access, shell, multi-file</span>
+<span class="s">      reasoning, or careful code changes."</span>,
+    <span class="n">"parameters"</span>: {
+      <span class="n">"type"</span>: <span class="s">"object"</span>,
+      <span class="n">"required"</span>: [<span class="s">"goal"</span>, <span class="s">"why"</span>],
+      <span class="n">"properties"</span>: {
+        <span class="n">"goal"</span>:    {<span class="n">"type"</span>: <span class="s">"string"</span>},
+        <span class="n">"why"</span>:     {<span class="n">"type"</span>: <span class="s">"string"</span>},
+        <span class="n">"workdir"</span>: {<span class="n">"type"</span>: <span class="s">"string"</span>},
+        <span class="n">"files"</span>:   {<span class="n">"type"</span>: <span class="s">"array"</span>}
+      }
+    }
+  }
+}</pre>
+    </div>
+  </div>
+
+  <div class="callout" style="margin-top: 32px;">A good system prompt for Ollama is one paragraph: <em>“You have a colleague named Claude Code who lives on the other side of a tool call. Hand off anything that touches files, shells, or more than one part of a codebase. Don't apologize for handing off.”</em></div>
+</section>
+
+<!-- ════════════════ §3 THE HANDOFF PAYLOAD + PROMPT ════════════════ -->
+<section class="block">
+  <div class="head-row">
+    <span class="tag">§ 03</span>
+    <span class="tag">What gets sent across</span>
+  </div>
+  <h2 class="section" style="max-width:24ch;"><span class="num">D</span>The handoff payload, and the prompt it becomes.</h2>
+  <p style="max-width:62ch;">Whatever the transport mechanism, the <em>contents</em> of the handoff are the same shape. Treat it as a small contract between the two models: structured on the wire, prose by the time it hits Claude Code.</p>
+
+  <div class="twocol" style="margin-top: 28px; gap: 36px;">
+    <div>
+      <h3 class="sub">Payload (the wire format)</h3>
+      <p class="tight" style="font-size:13.5px;">What Ollama assembles before calling out. Five fields, in priority order.</p>
+      <pre class="code"><span class="lbl">handoff.json</span>{
+  <span class="n">"goal"</span>: <span class="s">"Add rate limiting to the /login route</span>
+<span class="s">           and write a test that proves it triggers</span>
+<span class="s">           after 5 attempts in 60s."</span>,
+
+  <span class="n">"workdir"</span>: <span class="s">"/Users/me/code/acme-api"</span>,
+
+  <span class="n">"conversation_summary"</span>: <span class="s">"User is debugging</span>
+<span class="s">     brute-force logins seen in prod. Stack is</span>
+<span class="s">     Express + Redis. They tried a naive in-memory</span>
+<span class="s">     counter; want something Redis-backed."</span>,
+
+  <span class="n">"attached_files"</span>: [
+    <span class="s">"src/routes/login.ts"</span>,
+    <span class="s">"src/middleware/"</span>
+  ],
+
+  <span class="n">"acceptance"</span>: [
+    <span class="s">"new test passes locally"</span>,
+    <span class="s">"no existing tests regress"</span>,
+    <span class="s">"diff is &lt; 80 lines"</span>
+  ]
+}</pre>
+    </div>
+    <div>
+      <h3 class="sub">Prompt (what Claude Code actually reads)</h3>
+      <p class="tight" style="font-size:13.5px;">Render the JSON into a brief, plain‑English brief. Don't dump the JSON itself.</p>
+      <pre class="code"><span class="lbl">prompt.md</span><span class="c"># Task</span>
+Add rate limiting to the <span class="n">/login</span> route and
+write a test that proves it triggers after 5
+attempts in 60s.
+
+<span class="c"># Working directory</span>
+<span class="n">/Users/me/code/acme-api</span>
+
+<span class="c"># Context from the user's chat</span>
+The user is debugging brute-force logins seen
+in prod. Stack: Express + Redis. They tried a
+naive in-memory counter and want something
+Redis-backed.
+
+<span class="c"># Likely-relevant paths</span>
+- <span class="n">src/routes/login.ts</span>
+- <span class="n">src/middleware/</span>
+
+<span class="c"># Acceptance</span>
+- new test passes locally
+- no existing tests regress
+- diff is &lt; 80 lines
+
+<span class="c"># Output</span>
+When done, print a one-paragraph summary
+followed by the unified diff.</pre>
+    </div>
+  </div>
+  <div class="callout" style="margin-top: 28px;">The single biggest quality lever isn't the model — it's whether the <em>conversation_summary</em> field is honest. Ollama saw the chat; Claude Code did not.</div>
+</section>
+
+<!-- ════════════════ §4 FOUR MECHANISMS ════════════════ -->
+<section class="block">
+  <div class="head-row">
+    <span class="tag">§ 04</span>
+    <span class="tag">Four ways to actually make the call</span>
+  </div>
+  <h2 class="section" style="max-width:22ch;"><span class="num">E</span>Pick a transport. Same payload, different plumbing.</h2>
+  <p style="max-width:62ch;">All four take the rendered prompt and return Claude Code's output. They differ in how much process / network you're willing to introduce, and whether you want streaming.</p>
+
+  <div class="fourcol" style="margin-top: 36px;">
+    <!-- 1. CLI subprocess -->
+    <div class="mech">
+      <div class="head">
+        <h4>Spawn the CLI</h4>
+        <span class="num">M·01</span>
+      </div>
+      <p class="summary">Ollama's tool handler shells out to <code class="inline">claude</code> with <code class="inline">-p</code> (print mode) and reads stdout.</p>
+      <pre class="code"><span class="c"># inside the tool handler</span>
+proc = subprocess.Popen(
+  [<span class="s">"claude"</span>, <span class="s">"-p"</span>, prompt,
+   <span class="s">"--output-format"</span>,
+   <span class="s">"stream-json"</span>],
+  cwd=workdir,
+  stdout=subprocess.PIPE)
+
+<span class="k">for</span> line <span class="k">in</span> proc.stdout:
+    event = json.loads(line)
+    forward(event)</pre>
+      <dl>
+        <dt>Best</dt><dd>single workstation, one user.</dd>
+        <dt>Watch</dt><dd>auth must be set up in the same shell; no isolation.</dd>
+      </dl>
+    </div>
+
+    <!-- 2. Headless on a file -->
+    <div class="mech">
+      <div class="head">
+        <h4>Headless on a prompt file</h4>
+        <span class="num">M·02</span>
+      </div>
+      <p class="summary">Write the rendered brief to <code class="inline">task.md</code>, then pipe it in. Lets you keep prompts as artifacts.</p>
+      <pre class="code">Path(<span class="s">".cc/task.md"</span>).write_text(prompt)
+
+<span class="c"># cat into claude -p, JSON out</span>
+$ <span class="k">cat</span> .cc/task.md \
+    | claude -p \
+    --output-format json \
+    &gt; .cc/result.json</pre>
+      <dl>
+        <dt>Best</dt><dd>auditable runs, replay, CI.</dd>
+        <dt>Watch</dt><dd>not streaming by default — user waits.</dd>
+      </dl>
+    </div>
+
+    <!-- 3. MCP -->
+    <div class="mech">
+      <div class="head">
+        <h4>MCP bridge</h4>
+        <span class="num">M·03</span>
+      </div>
+      <p class="summary">Wrap Claude Code as an MCP server exposing one tool, <code class="inline">delegate_task</code>. Any MCP‑aware host (incl. an Ollama wrapper) calls it.</p>
+      <pre class="code"><span class="c"># server.py — fastmcp</span>
+<span class="k">from</span> mcp.server <span class="k">import</span> FastMCP
+mcp = FastMCP(<span class="s">"claude-code"</span>)
+
+<span class="k">@</span>mcp.tool()
+<span class="k">def</span> <span class="n">delegate_task</span>(prompt: <span class="p">str</span>,
+                  workdir: <span class="p">str</span>) -&gt; <span class="p">str</span>:
+    <span class="k">return</span> run_claude(prompt, workdir)
+
+mcp.run()</pre>
+      <dl>
+        <dt>Best</dt><dd>multi‑agent setups, multiple hosts.</dd>
+        <dt>Watch</dt><dd>extra hop; Ollama needs an MCP client wrapper.</dd>
+      </dl>
+    </div>
+
+    <!-- 4. HTTP -->
+    <div class="mech">
+      <div class="head">
+        <h4>HTTP wrapper</h4>
+        <span class="num">M·04</span>
+      </div>
+      <p class="summary">Tiny FastAPI service on <code class="inline">:8787</code> that owns the Claude Code subprocess. Ollama just POSTs.</p>
+      <pre class="code"><span class="k">@</span>app.post(<span class="s">"/delegate"</span>)
+<span class="k">async def</span> <span class="n">delegate</span>(req: Brief):
+    <span class="k">async for</span> ev <span class="k">in</span> claude_stream(
+        req.prompt, cwd=req.workdir):
+        <span class="k">yield</span> sse(ev)
+
+<span class="c"># ollama tool handler:</span>
+requests.post(
+  <span class="s">"http://localhost:8787/delegate"</span>,
+  json=payload, stream=<span class="p">True</span>)</pre>
+      <dl>
+        <dt>Best</dt><dd>team server, remote workstation, web UI.</dd>
+        <dt>Watch</dt><dd>you own the security boundary now.</dd>
+      </dl>
+    </div>
+  </div>
+  <div class="figcap" style="margin-top: 22px;"><b>Fig. E</b> &nbsp;·&nbsp; Same handoff payload, four transports. Cards are ordered from least to most plumbing.</div>
+</section>
+
+<!-- ════════════════ §5 STREAMING BACK ════════════════ -->
+<section class="block">
+  <div class="head-row">
+    <span class="tag">§ 05</span>
+    <span class="tag">Stitching the answer back into the chat</span>
+  </div>
+  <h2 class="section" style="max-width:22ch;"><span class="num">F</span>Don't make the user stare at a blank cursor.</h2>
+  <p style="max-width:62ch;">Claude Code's <code class="inline">stream-json</code> output emits events as it works. Ollama's job is to translate those events into single‑sentence updates in the user's voice — not to forward them raw.</p>
+
+  <div class="twocol" style="margin-top: 28px; gap: 36px;">
+    <div>
+      <h3 class="sub">Raw stream from Claude Code</h3>
+      <pre class="code"><span class="lbl">stdout · ndjson</span>{<span class="n">"type"</span>:<span class="s">"tool_use"</span>,<span class="n">"name"</span>:<span class="s">"Read"</span>,
+ <span class="n">"path"</span>:<span class="s">"src/routes/login.ts"</span>}
+{<span class="n">"type"</span>:<span class="s">"tool_use"</span>,<span class="n">"name"</span>:<span class="s">"Grep"</span>,
+ <span class="n">"pattern"</span>:<span class="s">"rate.?limit"</span>}
+{<span class="n">"type"</span>:<span class="s">"tool_use"</span>,<span class="n">"name"</span>:<span class="s">"Edit"</span>,
+ <span class="n">"path"</span>:<span class="s">"src/middleware/rateLimit.ts"</span>}
+{<span class="n">"type"</span>:<span class="s">"tool_use"</span>,<span class="n">"name"</span>:<span class="s">"Bash"</span>,
+ <span class="n">"cmd"</span>:<span class="s">"npm test -- login"</span>}
+{<span class="n">"type"</span>:<span class="s">"assistant_text"</span>,
+ <span class="n">"text"</span>:<span class="s">"All 14 tests pass. Diff below."</span>}</pre>
+    </div>
+    <div>
+      <h3 class="sub">What the user sees in Ollama's chat</h3>
+      <pre class="code"><span class="lbl">chat surface · user view</span><span class="c">› Reading login.ts and</span>
+<span class="c">  searching for existing rate limiters…</span>
+
+<span class="c">› Drafting a new middleware</span>
+<span class="c">  src/middleware/rateLimit.ts…</span>
+
+<span class="c">› Running the login test suite…</span>
+
+<span class="c">  All 14 tests pass.</span>
+<span class="c">  Here's the diff:</span>
+
+  <span class="k">+</span> import rateLimit from <span class="s">"./middleware/...</span>
+  <span class="k">+</span> app.use(<span class="s">"/login"</span>, rateLimit({ <span class="m">...</span> }))
+  <span class="m">...</span></pre>
+    </div>
+  </div>
+
+  <div style="margin-top: 32px;" class="threecol">
+    <div>
+      <h3 class="sub">Translation pass</h3>
+      <p style="font-size:13.5px;">Each event becomes a single line, written by Ollama in the user's voice. The system prompt for this is two sentences: <em>“You are narrating a colleague's work. Use present continuous tense. Never quote raw tool names.”</em></p>
+    </div>
+    <div>
+      <h3 class="sub">Backpressure</h3>
+      <p style="font-size:13.5px;">Throttle to one update per ~800ms. Claude Code may emit dozens of events per second on a grep; the user only needs to know <em>something is happening</em>.</p>
+    </div>
+    <div>
+      <h3 class="sub">Final stitch</h3>
+      <p style="font-size:13.5px;">When the stream closes, Ollama gets one more turn: re‑read the conversation, the user's last message, and Claude Code's final text — then write the closing answer itself. This is where tone and memory live.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ════════════════ §6 ONE-PAGE RECAP ════════════════ -->
+<section class="block">
+  <div class="head-row">
+    <span class="tag">§ 06</span>
+    <span class="tag">In one diagram</span>
+  </div>
+  <h2 class="section" style="max-width:22ch;"><span class="num">G</span>The whole pattern, on a single page.</h2>
+
+  <div style="margin-top: 32px; background: var(--paper-2); border-radius: 4px; padding: 32px 24px;">
+    <svg viewBox="0 0 1100 380" width="100%" height="auto" aria-hidden="true">
+      <!-- user -->
+      <g>
+        <circle cx="80" cy="190" r="34" fill="white" stroke="var(--user)" stroke-width="1.5"/>
+        <text x="80" y="194" text-anchor="middle" class="lane-label" fill="var(--user)">USER</text>
+      </g>
+
+      <!-- ollama block (with router + voice halves) -->
+      <g>
+        <rect x="240" y="80" width="280" height="220" fill="white" stroke="var(--rust)" stroke-width="1.5"/>
+        <text x="380" y="108" text-anchor="middle" class="lane-label" fill="var(--rust)">OLLAMA  ·  HOST</text>
+        <line x1="240" y1="125" x2="520" y2="125" stroke="var(--rust)" stroke-width="0.8" stroke-dasharray="2 3"/>
+
+        <text x="260" y="150" class="step-title">router</text>
+        <text x="260" y="170" class="step-text">heuristic prefilter</text>
+        <text x="260" y="188" class="step-text">+ tool-call judge</text>
+
+        <line x1="240" y1="210" x2="520" y2="210" stroke="var(--rust)" stroke-width="0.8" stroke-dasharray="2 3"/>
+
+        <text x="260" y="232" class="step-title">voice</text>
+        <text x="260" y="252" class="step-text">paraphrases progress</text>
+        <text x="260" y="270" class="step-text">writes final answer</text>
+        <text x="260" y="288" class="step-text">remembers conversation</text>
+      </g>
+
+      <!-- handoff packet -->
+      <g>
+        <rect x="580" y="155" width="160" height="90" rx="3" fill="white" stroke="var(--ink-2)" stroke-width="1" stroke-dasharray="3 3"/>
+        <text x="660" y="174" text-anchor="middle" class="step-num">HANDOFF · §03</text>
+        <text x="595" y="192" class="step-text">goal</text>
+        <text x="595" y="208" class="step-text">workdir</text>
+        <text x="595" y="224" class="step-text">conv summary</text>
+        <text x="595" y="240" class="step-text">files · acceptance</text>
+      </g>
+
+      <!-- claude -->
+      <g>
+        <rect x="800" y="80" width="240" height="220" fill="white" stroke="var(--petrol)" stroke-width="1.5" stroke-dasharray="4 5"/>
+        <text x="920" y="108" text-anchor="middle" class="lane-label" fill="var(--petrol)">CLAUDE CODE</text>
+        <text x="820" y="140" class="step-text">headless · -p mode</text>
+        <text x="820" y="160" class="step-text">tools: read · edit · bash · grep</text>
+        <text x="820" y="180" class="step-text">streams ndjson to stdout</text>
+
+        <line x1="800" y1="200" x2="1040" y2="200" stroke="var(--petrol)" stroke-width="0.6" stroke-dasharray="2 3"/>
+
+        <text x="820" y="222" class="step-text">via one of:</text>
+        <text x="835" y="242" class="step-text">· subprocess  (M·01)</text>
+        <text x="835" y="258" class="step-text">· file + claude -p  (M·02)</text>
+        <text x="835" y="274" class="step-text">· MCP server  (M·03)</text>
+        <text x="835" y="290" class="step-text">· HTTP wrapper  (M·04)</text>
+      </g>
+
+      <!-- arrows -->
+      <g stroke="var(--ink-2)" stroke-width="1.2" fill="none">
+        <path d="M114 184 L238 156" marker-end="url(#arrR2)"/>
+        <path d="M238 224 L114 196" marker-end="url(#arrR2)"/>
+        <path d="M520 192 L578 192" marker-end="url(#arrR2)"/>
+        <path d="M578 208 L520 208" marker-end="url(#arrR2)"/>
+        <path d="M740 192 L798 192" marker-end="url(#arrR2)"/>
+        <path d="M798 208 L740 208" marker-end="url(#arrR2)"/>
+      </g>
+
+      <text x="160" y="148" class="ann">message</text>
+      <text x="170" y="216" class="ann">reply</text>
+      <text x="538" y="184" class="ann">brief</text>
+      <text x="538" y="222" class="ann">events</text>
+      <text x="752" y="184" class="ann">spawn</text>
+      <text x="752" y="222" class="ann">stream</text>
+
+      <!-- machine boundary -->
+      <rect x="40" y="60" width="720" height="280" rx="2" fill="none" stroke="var(--rule-strong)" stroke-dasharray="2 5"/>
+      <text x="50" y="78" class="ann">YOUR MACHINE  ·  on-device</text>
+      <text x="775" y="78" class="ann">subprocess / api</text>
+
+      <defs>
+        <marker id="arrR2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="var(--ink-2)"/></marker>
+      </defs>
+    </svg>
+    <div class="figcap"><b>Fig. G</b> &nbsp;·&nbsp; The host (Ollama) splits into router + voice. The specialist (Claude Code) is reached through one of four transports, all carrying the same brief.</div>
+  </div>
+</section>
+
+<!-- ════════════════ §7 YOUR HARDWARE ════════════════ -->
+<section class="block">
+  <div class="head-row">
+    <span class="tag">§ 07</span>
+    <span class="tag">Mapped onto your actual rig</span>
+  </div>
+  <h2 class="section" style="max-width:26ch;"><span class="num">H</span>Your three boxes are already a three‑tier escalation ladder.</h2>
+  <p style="max-width:64ch;">The abstract pattern assumed one local model. You have <em>three machines</em> at three capability levels — which is better. Each rung only escalates what it can't finish, so the tiny always‑on device never pays for the big reasoner, and the big reasoner never pays for the cloud unless it has to.</p>
+
+  <div style="display:flex; gap:10px; flex-wrap:wrap; margin: 22px 0 8px;">
+    <span class="pill rust"><span class="dot"></span>TIER 1 · FRONT-END &amp; REFLEX</span>
+    <span class="pill" style="border-color:var(--ochre);"><span class="dot" style="background:var(--ochre);"></span>TIER 2 · LOCAL BRAIN + ROUTER</span>
+    <span class="pill petrol"><span class="dot"></span>TIER 3 · CLOUD SPECIALIST</span>
+  </div>
+
+  <!-- topology diagram -->
+  <div style="margin-top: 24px; background: var(--paper-2); border-radius: 4px; padding: 30px 22px 18px;">
+    <svg viewBox="0 0 1120 420" width="100%" height="auto" aria-hidden="true">
+      <!-- chat in/out -->
+      <g>
+        <text x="22" y="150" class="ann">you type</text>
+        <path d="M20 160 L92 178" stroke="var(--ink-2)" stroke-width="1.2" fill="none" marker-end="url(#a7)"/>
+        <text x="22" y="262" class="ann">you read</text>
+        <path d="M92 240 L20 252" stroke="var(--ink-2)" stroke-width="1.2" fill="none" marker-end="url(#a7)"/>
+      </g>
+
+      <!-- TIER 1: CoreS3 -->
+      <g>
+        <rect x="100" y="120" width="180" height="180" rx="4" fill="white" stroke="var(--rust)" stroke-width="1.5"/>
+        <text x="116" y="146" class="lane-label" fill="var(--rust)">TIER 1</text>
+        <text x="116" y="168" class="step-title">M5Stack CoreS3</text>
+        <text x="116" y="186" class="step-text">+ LLM Module · AX630C</text>
+        <line x1="116" y1="198" x2="264" y2="198" stroke="var(--rust-soft)" stroke-width="1"/>
+        <text x="116" y="218" class="step-text">Qwen2.5‑0.5B</text>
+        <text x="116" y="236" class="step-text">touchscreen chat UI</text>
+        <text x="116" y="254" class="step-text">3.2 TOPS · 1.5 W</text>
+        <text x="116" y="282" class="ann">handles reflexes,</text>
+        <text x="116" y="296" class="ann">forwards real questions</text>
+      </g>
+
+      <!-- arrow t1 -> t2 -->
+      <path d="M280 200 L348 200" stroke="var(--ink-2)" stroke-width="1.4" fill="none" marker-end="url(#a7)"/>
+      <text x="286" y="190" class="ann">LAN · OpenAI API</text>
+
+      <!-- TIER 2: two Orange Pis -->
+      <g>
+        <rect x="350" y="84" width="360" height="252" rx="4" fill="none" stroke="var(--ochre)" stroke-width="1.2" stroke-dasharray="3 4"/>
+        <text x="366" y="106" class="lane-label" fill="var(--ochre)">TIER 2 · 2× ORANGE PI 5 PRO · RK3588S</text>
+
+        <!-- Pi #1 router -->
+        <rect x="366" y="120" width="158" height="200" rx="3" fill="white" stroke="var(--ochre)" stroke-width="1.5"/>
+        <text x="380" y="142" class="step-title">Pi #1 — HOST</text>
+        <text x="380" y="160" class="step-text">Qwen2.5‑7B</text>
+        <text x="380" y="177" class="step-text">RKLLama · NPU</text>
+        <text x="380" y="194" class="step-text">tool calling on</text>
+        <line x1="380" y1="206" x2="510" y2="206" stroke="var(--ochre-soft)" stroke-width="1"/>
+        <text x="380" y="226" class="ann-i">router</text>
+        <text x="380" y="244" class="step-text">decides to escalate</text>
+        <text x="380" y="262" class="ann-i">voice</text>
+        <text x="380" y="280" class="step-text">owns the conversation</text>
+        <text x="380" y="298" class="step-text">narrates progress</text>
+
+        <!-- Pi #2 worker -->
+        <rect x="536" y="120" width="158" height="200" rx="3" fill="white" stroke="var(--ochre)" stroke-width="1.5"/>
+        <text x="550" y="142" class="step-title">Pi #2 — WORKER</text>
+        <text x="550" y="160" class="step-text">Qwen2.5‑Coder</text>
+        <text x="550" y="177" class="step-text">+ Whisper / embeds</text>
+        <line x1="550" y1="189" x2="680" y2="189" stroke="var(--ochre-soft)" stroke-width="1"/>
+        <text x="550" y="209" class="step-text">2nd opinion before</text>
+        <text x="550" y="225" class="step-text">paying for cloud</text>
+        <text x="550" y="251" class="ann-i">also runs:</text>
+        <text x="550" y="271" class="step-text">claude code headless</text>
+        <text x="550" y="287" class="step-text">(arm64) against a</text>
+        <text x="550" y="303" class="step-text">local git checkout</text>
+
+        <!-- internal link -->
+        <path d="M524 250 L536 250" stroke="var(--ochre)" stroke-width="1.2" fill="none" marker-end="url(#a7o)"/>
+        <path d="M536 264 L524 264" stroke="var(--ochre)" stroke-width="1.2" fill="none" marker-end="url(#a7o)"/>
+      </g>
+
+      <!-- arrow t2 -> t3 -->
+      <path d="M710 180 L800 160" stroke="var(--ink-2)" stroke-width="1.4" fill="none" marker-end="url(#a7)"/>
+      <text x="718" y="150" class="ann">escalate · §03 brief</text>
+      <path d="M800 230 L710 250" stroke="var(--petrol)" stroke-width="1.4" fill="none" marker-end="url(#a7p)"/>
+      <text x="724" y="252" class="ann">stream‑json back</text>
+
+      <!-- TIER 3: Claude Code cloud -->
+      <g>
+        <rect x="802" y="120" width="200" height="160" rx="4" fill="white" stroke="var(--petrol)" stroke-width="1.5" stroke-dasharray="4 5"/>
+        <text x="818" y="146" class="lane-label" fill="var(--petrol)">TIER 3</text>
+        <text x="818" y="168" class="step-title">Claude Code</text>
+        <text x="818" y="186" class="step-text">Anthropic API</text>
+        <line x1="818" y1="198" x2="986" y2="198" stroke="var(--petrol-soft)" stroke-width="1"/>
+        <text x="818" y="218" class="step-text">read · edit · bash · test</text>
+        <text x="818" y="236" class="step-text">multi‑file reasoning</text>
+        <text x="818" y="262" class="ann">the only hop that</text>
+        <text x="818" y="276" class="ann">leaves your network</text>
+      </g>
+
+      <!-- boundary -->
+      <rect x="80" y="60" width="700" height="296" rx="2" fill="none" stroke="var(--rule-strong)" stroke-dasharray="2 5"/>
+      <text x="90" y="78" class="ann">YOUR NETWORK · ON‑PREM · OFFLINE‑CAPABLE</text>
+
+      <defs>
+        <marker id="a7" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="var(--ink-2)"/></marker>
+        <marker id="a7o" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="var(--ochre)"/></marker>
+        <marker id="a7p" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="var(--petrol)"/></marker>
+      </defs>
+    </svg>
+    <div class="figcap"><b>Fig. H</b> &nbsp;·&nbsp; Three rungs. A question only climbs when the rung below it can't finish the job.</div>
+  </div>
+
+  <!-- role cards -->
+  <div class="threecol" style="margin-top: 44px;">
+    <!-- CoreS3 -->
+    <div class="mech" style="border-color: var(--rust-soft);">
+      <div class="head" style="border-color: var(--rust-soft);">
+        <h4>The front-end</h4>
+        <span class="num" style="color:var(--rust);">TIER 1</span>
+      </div>
+      <p class="summary">M5Stack CoreS3 + LLM Module. An always-on desk terminal with a touchscreen, sips 1.5 W. It is a <em>reflex</em>, not a brain.</p>
+      <dl>
+        <dt>SoC</dt><dd>AX630C · dual A53 @1.2 GHz</dd>
+        <dt>NPU</dt><dd>3.2 TOPS INT8</dd>
+        <dt>Model</dt><dd>Qwen2.5‑0.5B (on‑module)</dd>
+        <dt>Owns</dt><dd>the chat UI, trivial one‑line replies</dd>
+        <dt>Escalates</dt><dd>anything past a one‑liner → Pi #1</dd>
+      </dl>
+      <p class="summary" style="font-size:12.5px; color:var(--muted);">Install the <code class="inline">openai-api</code> StackFlow plugin so the module POSTs typed messages to the Pi as a normal chat request.</p>
+    </div>
+
+    <!-- Orange Pi -->
+    <div class="mech" style="border-color: var(--ochre-soft);">
+      <div class="head" style="border-color: var(--ochre-soft);">
+        <h4>The brain &amp; router</h4>
+        <span class="num" style="color:var(--ochre);">TIER 2</span>
+      </div>
+      <p class="summary">2× Orange Pi 5 Pro. This is the “local LLM” from the rest of this doc — host, router, and voice all live here.</p>
+      <dl>
+        <dt>SoC</dt><dd>RK3588S · octa‑core · 6 TOPS NPU</dd>
+        <dt>Runtime</dt><dd>RKLLama (NPU) — Ollama‑compatible API</dd>
+        <dt>Model</dt><dd>Qwen2.5‑7B, tool calling enabled</dd>
+        <dt>Pi #1</dt><dd>router + conversation owner</dd>
+        <dt>Pi #2</dt><dd>coder / Whisper / runs Claude Code</dd>
+      </dl>
+      <p class="summary" style="font-size:12.5px; color:var(--muted);">RKLLama supports function calling for Qwen &amp; Llama‑3.2+, so the <code class="inline">escalate_to_claude_code</code> tool from §02 works natively on the NPU.</p>
+    </div>
+
+    <!-- Claude -->
+    <div class="mech" style="border-color: var(--petrol-soft);">
+      <div class="head" style="border-color: var(--petrol-soft);">
+        <h4>The specialist</h4>
+        <span class="num" style="color:var(--petrol);">TIER 3</span>
+      </div>
+      <p class="summary">Claude Code, reached only when Tier 2 calls the tool. The single hop that leaves your network.</p>
+      <dl>
+        <dt>Runs</dt><dd>headless on Pi #2, or a dev box</dd>
+        <dt>Transport</dt><dd>subprocess (M·01) or HTTP (M·04)</dd>
+        <dt>Sees</dt><dd>the §03 brief + a real git checkout</dd>
+        <dt>Returns</dt><dd>summary + diff via stream‑json</dd>
+      </dl>
+      <p class="summary" style="font-size:12.5px; color:var(--muted);">Because the Pi is arm64 Linux with Node, the <code class="inline">claude</code> CLI can run <em>on the Pi itself</em> — the orchestration stays local even though inference is cloud.</p>
+    </div>
+  </div>
+
+  <!-- the climb, concretely -->
+  <h3 class="sub" style="margin-top: 48px; font-size:15px;">The same question, climbing the ladder</h3>
+  <div class="twocol" style="gap:36px; margin-top: 14px;">
+    <div>
+      <pre class="code"><span class="lbl">tier 1 · CoreS3 decides</span><span class="c"># on-module, Qwen2.5-0.5B</span>
+typed: <span class="s">"add rate limiting to the login route"</span>
+
+<span class="c"># 0.5B can't touch a repo → forward verbatim</span>
+POST http://pi1.local:8000/v1/chat/completions
+  { <span class="n">"messages"</span>: [{<span class="n">"role"</span>:<span class="s">"user"</span>,
+    <span class="n">"content"</span>:<span class="s">"add rate limiting to the login route"</span>}] }</pre>
+      <p style="font-size:13px; margin-top:12px;">If you'd typed “what time is it” or “clear the queue,” Tier 1 answers on its own screen — no climb.</p>
+    </div>
+    <div>
+      <pre class="code"><span class="lbl">tier 2 · Pi #1 routes (RKLLama, NPU)</span><span class="c"># Qwen2.5-7B emits a tool call, not prose</span>
+{
+  <span class="n">"tool_call"</span>: <span class="s">"escalate_to_claude_code"</span>,
+  <span class="n">"arguments"</span>: {
+    <span class="n">"goal"</span>: <span class="s">"Add rate limiting to /login + a test"</span>,
+    <span class="n">"why"</span>:  <span class="s">"needs repo edits and a test run"</span>,
+    <span class="n">"workdir"</span>: <span class="s">"/srv/acme-api"</span>
+  }
+}
+<span class="c"># handler shells out on Pi #2:</span>
+$ ssh pi2 <span class="s">'claude -p "$(cat brief.md)" \</span>
+<span class="s">    --output-format stream-json'</span></pre>
+    </div>
+  </div>
+
+  <div class="callout" style="margin-top: 32px;">The honest caveat: a 0.5B and a 7B are good at <em>knowing they're stuck</em> and routing — they're not good at the hard task itself. That's exactly why the ladder exists. Keep Tier 1 &amp; 2 as routers with personality, and let Tier 3 do the work that needs to be correct.</div>
+</section>
+
+<!-- ════════════════ §8 MODEL PICKS ════════════════ -->
+<section class="block">
+  <div class="head-row">
+    <span class="tag">§ 08</span>
+    <span class="tag">Which model on which box</span>
+  </div>
+  <h2 class="section" style="max-width:24ch;"><span class="num">I</span>Pick for the routing, not the coding.</h2>
+  <p style="max-width:64ch;">Counter‑intuitive, but central: in this pattern the local model never has to be a great programmer — <em>Claude Code is.</em> The local model's real job is to recognise a coding task, <em>emit the escalation tool call cleanly,</em> and write a faithful §03 brief. So rank candidates in this order:</p>
+  <ul class="bullets" style="margin-top:8px;">
+    <li><b>Tool‑calling reliability</b> — does it emit valid function calls every time? RKLLama lists <em>Qwen and Llama‑3.2+</em> as the formats with complete tool‑call support, which all but decides this.</li>
+    <li><b>Instruction following</b> — can it summarise the conversation into a clean brief and know when <em>not</em> to escalate?</li>
+    <li><b>Coding literacy</b> — only enough to handle one‑line fixes and write a sensible brief. The hard edits leave the network.</li>
+  </ul>
+
+  <div class="twocol" style="margin-top: 44px; gap: 44px; align-items: start;">
+    <!-- AX630C -->
+    <div>
+      <div style="display:flex; align-items:center; gap:10px; margin-bottom: 4px;">
+        <span class="pill rust"><span class="dot"></span>TIER 1 · M5Stack · AX630C</span>
+      </div>
+      <h3 class="sub" style="font-size:16px; margin: 12px 0 2px;">Front‑end &amp; reflex</h3>
+      <p style="font-size:13px; color:var(--muted); margin-bottom: 14px; max-width:46ch;">AXERA‑format only, ~1 GB usable → hard cap around 1.5B. It mostly forwards, so favour the best <em>judge</em>, not the best coder.</p>
+      <div class="ranklist">
+        <div class="rrow">
+          <div class="rrank">01</div>
+          <div class="rname">Qwen2.5‑1.5B <span class="sz">Instruct</span></div>
+          <div class="rtag pick">Pick</div>
+          <div class="rwhy">Best instruction‑following at this size — sharpest at the “answer it myself vs. forward” call, and it knows code well enough to forward the right things.</div>
+          <div class="rmeta"><span class="chip"><b>in apt repo</b></span><span class="chip">judge + forward</span></div>
+        </div>
+        <div class="rrow">
+          <div class="rrank">02</div>
+          <div class="rname">Llama‑3.2‑1B <span class="sz">Instruct</span></div>
+          <div class="rtag alt">Alt</div>
+          <div class="rwhy">If you want the module itself to emit the forward <em>as</em> a tool call rather than a plain POST. Slightly weaker reasoning than Qwen.</div>
+          <div class="rmeta"><span class="chip"><b>in apt repo</b></span><span class="chip">native tool format</span></div>
+        </div>
+        <div class="rrow">
+          <div class="rrank">03</div>
+          <div class="rname">Qwen2.5‑0.5B</div>
+          <div class="rtag alt">Default</div>
+          <div class="rwhy">Ships on the module. Fine as a dumb pass‑through, but too small to judge trivial‑vs‑forward reliably.</div>
+          <div class="rmeta"><span class="chip"><b>pre‑installed</b></span></div>
+        </div>
+        <div class="rrow">
+          <div class="rrank">—</div>
+          <div class="rname">deepseek‑r1‑distill‑qwen‑1.5B</div>
+          <div class="rtag skip">Skip here</div>
+          <div class="rwhy">A reasoner that “thinks out loud” — wrong shape for a snappy reflex terminal. Save reasoning for the Pi.</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- RK3588S -->
+    <div>
+      <div style="display:flex; align-items:center; gap:10px; margin-bottom: 4px;">
+        <span class="pill" style="border-color:var(--ochre);"><span class="dot" style="background:var(--ochre);"></span>TIER 2 · Orange Pi · RK3588S</span>
+      </div>
+      <h3 class="sub" style="font-size:16px; margin: 12px 0 2px;">Brain &amp; router — where Claude Code integration lives</h3>
+      <p style="font-size:13px; color:var(--muted); margin-bottom: 14px; max-width:46ch;">16 GB, rkllm/NPU. This box owns the <code class="inline">escalate_to_claude_code</code> tool, so tool‑calling reliability is everything. ~3–7 t/s at 7B.</p>
+      <div class="ranklist">
+        <div class="rrow">
+          <div class="rrank">01</div>
+          <div class="rname">Qwen2.5‑Coder‑7B <span class="sz">Instruct</span></div>
+          <div class="rtag pick o">Pick · Pi #1</div>
+          <div class="rwhy">The host/router. Best blend of Qwen tool‑calling + real coding sense, so it both fires the escalation reliably <em>and</em> writes a brief that reads like an engineer wrote it.</div>
+          <div class="rmeta"><span class="chip"><b>rk3588 w8a8</b></span><span class="chip">tool calling</span><span class="chip">~3–7 t/s</span></div>
+        </div>
+        <div class="rrow">
+          <div class="rrank">02</div>
+          <div class="rname">Qwen2.5‑Coder‑3B <span class="sz">Instruct</span></div>
+          <div class="rtag pick o">Pick · Pi #2</div>
+          <div class="rwhy">The worker. Fast enough for second‑opinion passes and trivial edits before anything pays for the cloud; keeps Pi #1 free to host.</div>
+          <div class="rmeta"><span class="chip"><b>rk3588 w8a8</b></span><span class="chip">~5–8 t/s</span></div>
+        </div>
+        <div class="rrow">
+          <div class="rrank">03</div>
+          <div class="rname">Qwen2.5‑7B <span class="sz">Instruct</span></div>
+          <div class="rtag alt">Alt</div>
+          <div class="rwhy">Swap in if your front‑end traffic is more general chat than code. Same tool‑calling, broader knowledge, a touch less code fluency.</div>
+          <div class="rmeta"><span class="chip">tool calling</span></div>
+        </div>
+        <div class="rrow">
+          <div class="rrank">04</div>
+          <div class="rname">Llama‑3.2‑3B <span class="sz">Instruct</span></div>
+          <div class="rtag alt">Fallback</div>
+          <div class="rwhy">The non‑Qwen safety net — also a supported tool‑call format in RKLLama. Reach for it only if a Qwen build misbehaves at function calling.</div>
+          <div class="rmeta"><span class="chip">tool calling</span><span class="chip">lighter</span></div>
+        </div>
+        <div class="rrow">
+          <div class="rrank">—</div>
+          <div class="rname">deepseek‑coder‑7B</div>
+          <div class="rtag skip">Niche</div>
+          <div class="rwhy">Strong at raw completion, weaker at instruction‑following / tool calls. Good as a local autocomplete worker, poor as the router.</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- recommended stack -->
+  <div style="margin-top: 48px; background: var(--paper-2); border-radius: 4px; padding: 30px 30px 26px;">
+    <h3 class="sub" style="font-size:13px; letter-spacing:0.14em; text-transform:uppercase; color:var(--muted); margin-bottom: 20px;">Recommended stack — Qwen2.5 the whole way up</h3>
+    <div class="fourcol" style="gap:0; align-items:stretch;">
+      <div style="padding-right:24px; border-right:1px solid var(--rule);">
+        <div class="rrank" style="margin-bottom:6px;">TIER 1 · CoreS3</div>
+        <div class="rname" style="font-size:15px; line-height:1.3;">Qwen2.5‑1.5B</div>
+        <p style="font-size:12.5px; color:var(--ink-2); margin:8px 0 0;">judges trivial‑vs‑forward, runs the touchscreen UI</p>
+      </div>
+      <div style="padding:0 24px; border-right:1px solid var(--rule);">
+        <div class="rrank" style="margin-bottom:6px;">TIER 2 · Pi #1</div>
+        <div class="rname" style="font-size:15px; line-height:1.3;">Qwen2.5‑Coder‑7B</div>
+        <p style="font-size:12.5px; color:var(--ink-2); margin:8px 0 0;">router + host; owns the escalate tool and writes the brief</p>
+      </div>
+      <div style="padding:0 24px; border-right:1px solid var(--rule);">
+        <div class="rrank" style="margin-bottom:6px;">TIER 2 · Pi #2</div>
+        <div class="rname" style="font-size:15px; line-height:1.3;">Qwen2.5‑Coder‑3B</div>
+        <p style="font-size:12.5px; color:var(--ink-2); margin:8px 0 0;">worker + runs the <code class="inline">claude</code> CLI headless</p>
+      </div>
+      <div style="padding-left:24px;">
+        <div class="rrank" style="margin-bottom:6px; color:var(--petrol);">TIER 3 · cloud</div>
+        <div class="rname" style="font-size:15px; line-height:1.3; color:var(--petrol);">Claude Code</div>
+        <p style="font-size:12.5px; color:var(--ink-2); margin:8px 0 0;">does the work that has to be correct</p>
+      </div>
+    </div>
+    <p style="font-size:13px; color:var(--ink-2); margin: 22px 0 0; max-width:70ch;">One family top to bottom means one tool‑call dialect, one prompt style, one set of quirks to tune around — and Qwen is the family RKLLama supports best for function calling, which is the exact seam where Claude Code plugs in.</p>
+  </div>
+
+  <div class="callout" style="margin-top: 32px;">Reality check on speed: these convert‑to‑rkllm builds need the <code class="inline">w8a8</code> RK3588 format (e.g. the <code class="inline">c01zaut</code> Hugging Face repos) — stock Ollama/GGUF models won't touch the NPU. And at 3–7 t/s a 7B is a fine <em>router</em>, not a fast coder. That's the whole point: it routes, Claude Code codes.</div>
+</section>
+
+<!-- ════════════════ §9 IS IT WORTH IT ════════════════ -->
+<section class="block">
+  <div class="head-row">
+    <span class="tag">§ 09</span>
+    <span class="tag">The honest accounting</span>
+  </div>
+  <h2 class="section" style="max-width:24ch;"><span class="num">J</span>Is this rig actually worth it?</h2>
+  <p style="max-width:64ch;">Straight answer: for the goal of <em>shipping code with Claude Code</em>, the three boxes are <b>not of significant practical benefit</b> over just pointing the <code class="inline">claude</code> CLI at your repo. The reason is structural — the local tier can only absorb the work it's capable of, which is exactly the <em>trivial</em> turns it routes away from. All the cost, latency, and privacy exposure live in the hard turns, and those escalate regardless.</p>
+
+  <div class="twocol" style="margin-top: 32px; gap: 0;" >
+    <div class="ledger-col" style="border-right: 1px solid var(--rule); border: 1px solid var(--rule); border-radius: 4px 0 0 4px;">
+      <h4 style="color: var(--rust);">What it genuinely buys you</h4>
+      <ul>
+        <li><b>Learning &amp; homelab value</b>The strongest real return — understanding edge inference, NPUs, and routing. But it's <em>personal</em>, not economic.</li>
+        <li><b>An ambient front-end</b>A 1.5 W device that's always on the desk is a different object than opening a laptop. A genuine, if modest, UX win.</li>
+        <li><b>Offline reflexes</b>Trivial Q&amp;A and status keep working when the network drops — useful for a kiosk or air-gapped triage.</li>
+        <li><b>Privacy — partial</b>Only for turns that never escalate. Real, but narrow.</li>
+      </ul>
+    </div>
+    <div class="ledger-col" style="border: 1px solid var(--rule); border-left: none; border-radius: 0 4px 4px 0; background: var(--paper-2);">
+      <h4 style="color: var(--muted);">What it doesn't — for a coding goal</h4>
+      <ul>
+        <li><b>Token savings</b>The hard turns escalate anyway; the chatter you deflect is worth pennies. You'd never amortise ~$260+ of boards against it.</li>
+        <li><b>Privacy on the actual work</b>The moment a coding task escalates, your brief <em>and code</em> leave the network — identical to using Claude directly.</li>
+        <li><b>Speed</b>A 3–7 t/s router isn't doing the heavy lifting; it's a gate in front of the thing that is.</li>
+        <li><b>A Claude replacement</b>A 0.5–7B can't code at that level. That's the whole reason it escalates.</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="callout" style="margin-top: 32px;">Treat the current rig as a <em>tinkering and ambient-interface project that can reach Claude Code</em> — not a way to make Claude cheaper or more private. If you want the local tier to actually <em>finish</em> real coding work before escalating, that stops being a software question and becomes a hardware one. ↓</div>
+</section>
+
+<!-- ════════════════ §10 REAL CODING HARDWARE ════════════════ -->
+<section class="block">
+  <div class="head-row">
+    <span class="tag">§ 10</span>
+    <span class="tag">Hardware for real local coding</span>
+  </div>
+  <h2 class="section" style="max-width:26ch;"><span class="num">K</span>What it takes to finish work <em>before</em> Claude.</h2>
+  <p style="max-width:64ch;">To make the local tier a real coder — not just a router — you need a box that can hold a genuinely capable coding model. The bar for “real” in 2026 is roughly <b>Qwen3‑Coder‑Next</b>: an 80B MoE with only 3B active params that fits in ~46 GB at Q4 and scores <b>58.7% on SWE‑bench Verified</b> — against Claude Sonnet‑4's ~65%. Close enough to finish most tasks locally and only escalate the genuinely hard ones.</p>
+  <p style="max-width:64ch; font-size:13.5px; color:var(--muted);">Prices are approximate, mid‑2026, USD. None of these touch the RK3588 NPU — they're separate machines (a Mac or a GPU box) that join your network as a new rung in the ladder.</p>
+
+  <div class="threecol" style="margin-top: 36px; align-items: stretch;">
+    <!-- Tier 1 -->
+    <div class="ptier">
+      <span class="ptier-lab">Entry · capable assistant</span>
+      <div class="ptier-name">The 24 GB tier</div>
+      <div class="ptier-price">$1,300–2,000</div>
+      <hr/>
+      <dl>
+        <dt>Box</dt><dd>Used RTX 3090 24 GB (~$800) + host PC, <em>or</em> Mac Mini M4 Pro 64 GB (~$2,000)</dd>
+        <dt>Runs</dt><dd>Qwen2.5‑Coder‑32B · Qwen3.6‑27B</dd>
+        <dt>Level</dt><dd>~85% HumanEval, ~49% SWE‑bench · 25–40 t/s on the GPU</dd>
+      </dl>
+      <p class="verdict">Real refactors, tests, and debugging — but still clearly below Claude on hard agentic work.</p>
+    </div>
+
+    <!-- Tier 2 ★ -->
+    <div class="ptier star">
+      <span class="ptier-lab" style="color:var(--ochre);">★ Sweet spot · agentic coder</span>
+      <div class="ptier-name">The 64–128 GB tier</div>
+      <div class="ptier-price">$2,000–3,500</div>
+      <hr/>
+      <dl>
+        <dt>Box</dt><dd>Mac Studio M4 Max 128 GB (~$3,500), <em>or</em> 2× RTX 3090 = 48 GB (~$2,400), <em>or</em> Strix Halo 128 GB (~$2,000)</dd>
+        <dt>Runs</dt><dd>Qwen3‑Coder‑Next 80B MoE @ Q4 (~46 GB), 20+ t/s, 256K context, native tool calling</dd>
+        <dt>Level</dt><dd>~59% SWE‑bench Verified — most of the way to Sonnet‑4</dd>
+      </dl>
+      <p class="verdict">This is where “finish it locally, escalate only the hard part” becomes real.</p>
+    </div>
+
+    <!-- Tier 3 -->
+    <div class="ptier">
+      <span class="ptier-lab">Frontier‑adjacent · open weights</span>
+      <div class="ptier-name">The 512 GB tier</div>
+      <div class="ptier-price">$9,500+</div>
+      <hr/>
+      <dl>
+        <dt>Box</dt><dd>Mac Studio M3 Ultra 512 GB (~$9,500), <em>or</em> an EPYC server w/ 512 GB–1 TB RAM + GPU offload ($4–8k)</dd>
+        <dt>Runs</dt><dd>Qwen3‑Coder‑480B (61.8% Aider Polyglot) · DeepSeek‑V3 671B @ Q4 (~400 GB) at 17–20 t/s</dd>
+        <dt>Level</dt><dd>Rivals Sonnet‑4 / GPT‑4.1 on coding — at home</dd>
+      </dl>
+      <p class="verdict">Big spend, diminishing returns: huge‑context prompt processing is slow, and Claude's harness still often wins.</p>
+    </div>
+  </div>
+
+  <!-- where it slots in -->
+  <div style="margin-top: 44px; background: var(--paper-2); border-radius: 4px; padding: 30px 30px 26px;">
+    <h3 class="sub" style="font-size:13px; letter-spacing:0.14em; text-transform:uppercase; color:var(--muted); margin-bottom: 20px;">Where it slots into your ladder</h3>
+    <svg viewBox="0 0 1060 92" width="100%" height="auto" aria-hidden="true">
+      <g font-family="Geist Mono, monospace" font-size="11">
+        <!-- nodes -->
+        <rect x="0" y="26" width="150" height="44" rx="3" fill="white" stroke="var(--rust)" stroke-width="1.3"/>
+        <text x="75" y="46" text-anchor="middle" class="step-title">CoreS3</text>
+        <text x="75" y="61" text-anchor="middle" class="ann">reflex · UI</text>
+
+        <rect x="206" y="26" width="160" height="44" rx="3" fill="white" stroke="var(--ochre)" stroke-width="1.3"/>
+        <text x="286" y="46" text-anchor="middle" class="step-title">Orange Pi</text>
+        <text x="286" y="61" text-anchor="middle" class="ann">router</text>
+
+        <rect x="422" y="20" width="200" height="56" rx="3" fill="white" stroke="var(--ochre)" stroke-width="1.8"/>
+        <text x="522" y="42" text-anchor="middle" class="step-title">NEW · coding box</text>
+        <text x="522" y="58" text-anchor="middle" class="ann">Qwen3‑Coder‑Next · finishes most</text>
+
+        <rect x="678" y="26" width="170" height="44" rx="3" fill="white" stroke="var(--petrol)" stroke-width="1.3" stroke-dasharray="4 4"/>
+        <text x="763" y="46" text-anchor="middle" class="step-title" fill="var(--petrol)">Claude Code</text>
+        <text x="763" y="61" text-anchor="middle" class="ann">the hard part only</text>
+
+        <!-- arrows -->
+        <g stroke="var(--ink-2)" stroke-width="1.2" fill="none">
+          <path d="M150 48 L204 48" marker-end="url(#k1)"/>
+          <path d="M366 48 L420 48" marker-end="url(#k1)"/>
+          <path d="M622 48 L676 48" marker-end="url(#k1)"/>
+        </g>
+        <text x="900" y="44" class="ann">escalations</text>
+        <text x="900" y="60" class="ann">drop sharply ↓</text>
+      </g>
+      <defs>
+        <marker id="k1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="var(--ink-2)"/></marker>
+      </defs>
+    </svg>
+    <p style="font-size:13px; color:var(--ink-2); margin: 20px 0 0; max-width:72ch;">Add one Tier‑2 box as a <b>local senior coder</b> between the Pi router and Claude. Now the Pi escalates to <em>it</em> first; only what it can't finish climbs to Claude Code. That genuinely cuts cloud calls — but note you've now spent <b>$2–3.5k</b> to do it, which only pays back as privacy, offline capability, or the sheer enjoyment of running it. As a pure dollars‑per‑task trade against the API, it still doesn't.</p>
+  </div>
+</section>
+
+<!-- ════════════════ §11 LEVEL OF EFFORT ════════════════ -->
+<section class="block">
+  <div class="head-row">
+    <span class="tag">§ 11</span>
+    <span class="tag">Level of effort</span>
+  </div>
+  <h2 class="section" style="max-width:26ch;"><span class="num">L</span>What will it actually take to build?</h2>
+  <p style="max-width:64ch;">Honest distribution: a <b>crude demo is a weekend</b>, something <b>you'd actually rely on is 2–4 weeks of evenings</b>, and it carries real <b>ongoing upkeep</b>. The lopsided part is that the glue code is easy — the NPU and embedded layers are finicky and still officially “experimental,” and that's where the hours vanish.</p>
+  <p style="max-width:64ch; font-size:13.5px; color:var(--muted);"><b>Skill floor:</b> comfortable with Linux/SSH, Python, flashing SBC images, and patient with half-documented tooling. If that's you, it's very doable; if any of it is new, roughly double every estimate.</p>
+
+  <!-- effort table -->
+  <div style="margin-top: 36px;">
+    <div class="erow">
+      <div class="ecomp">Glue / orchestration <small>escalate tool · brief renderer · call to Claude Code · stream translation</small></div>
+      <div class="ebadge easy">Easy · 2–4 days</div>
+      <div class="epain">Just normal Python — the §02–05 code is most of it.</div>
+    </div>
+    <div class="erow">
+      <div class="ecomp">Claude Code itself <small>auth · repo checkout · headless -p</small></div>
+      <div class="ebadge easy">Easy · hours</div>
+      <div class="epain">Runs on arm64; trivial once a key is in place.</div>
+    </div>
+    <div class="erow">
+      <div class="ecomp">Orange Pi router <small>RKLLama · NPU · converted models · reliable tool calling</small></div>
+      <div class="ebadge hard">Hard · 1–2 weeks</div>
+      <div class="epain">The bulk of the project — see the hard parts below.</div>
+    </div>
+    <div class="erow">
+      <div class="ecomp">M5Stack front-end <small>firmware · apt models · forwarding · UI</small></div>
+      <div class="ebadge easy">Easy · hours*</div>
+      <div class="epain">*Your own framework already solves the AX630C comms (below); only the forwarding glue is left.</div>
+    </div>
+    <div class="erow">
+      <div class="ecomp">Optional coding box <small>Mac / GPU + Ollama (§10)</small></div>
+      <div class="ebadge easy">Easy · hours</div>
+      <div class="epain">Ollama is turnkey; wiring it in as a rung is more glue.</div>
+    </div>
+  </div>
+
+  <!-- hard parts -->
+  <div style="margin-top: 40px;" class="twocol">
+    <div>
+      <h3 class="sub" style="font-size:15px;">The genuinely hard parts — all on the Orange Pi</h3>
+      <ul class="bullets" style="margin-top:10px;">
+        <li>Needs a <b>bespoke Ubuntu 24.04</b> build with the right <b>RKNPU driver (0.9.6+)</b> — not the stock OS image.</li>
+        <li>Models must be <b>converted to the RK3588 <code class="inline">rkllm</code> format</b> (the <code class="inline">w8a8</code> builds). Stock Ollama/GGUF won't touch the NPU; converting yourself needs a separate x86 box with the toolkit.</li>
+        <li>The notorious <b>git-lfs gotcha</b>: you silently pull 135-byte pointer files instead of weights and get cryptic load errors.</li>
+        <li><b>NPU tool-calling is newer than CPU</b> — making <code class="inline">escalate_to_claude_code</code> fire reliably every time is the make-or-break, and the likeliest weekend-eater.</li>
+      </ul>
+    </div>
+    <div>
+      <div class="code-card" style="background: #14301F; border: 1px solid #2C5C3E;">
+        <div style="font-family:'Geist Mono',monospace; font-size:10.5px; letter-spacing:0.14em; text-transform:uppercase; color:#7FB58E; margin-bottom:12px;">↓ Fastest path to “working”</div>
+        <p style="color:#DDEBE0; font-size:14px; line-height:1.5; margin:0 0 12px;">Skip the NPU <em>and</em> the M5 for v1. The whole loop in a realistic <b>weekend</b>:</p>
+        <pre class="code" style="background:transparent; padding:0; font-size:11.5px;"><span class="c"># on one Orange Pi, CPU only</span>
+$ curl -fsSL https://ollama.com/install.sh | sh
+$ ollama pull qwen2.5:7b   <span class="c"># ~3–7 t/s, turnkey</span>
+
+<span class="c"># ~200 lines of Python:</span>
+<span class="c">#  • expose escalate_to_claude_code as a tool</span>
+<span class="c">#  • on a tool call, shell out to `claude -p`</span>
+<span class="c">#  • type into it over SSH</span></pre>
+        <p style="color:#9FC4A8; font-size:12.5px; line-height:1.5; margin:12px 0 0;">Proves the routing loop end-to-end. Then add the NPU, the touchscreen, and the §10 coding box as separate upgrades.</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- framework note -->
+  <div style="margin-top: 44px; background: var(--paper-2); border-radius: 4px; padding: 28px 30px;">
+    <div style="display:flex; align-items:baseline; gap:12px; flex-wrap:wrap; margin-bottom: 14px;">
+      <h3 class="sub" style="font-size:15px; margin:0;">Does your <span style="font-family:'Geist Mono',monospace; font-size:13px;">M5Stack_I2C_Framework</span> reduce complexity?</h3>
+      <span class="pill" style="border-color:#4F7A4A;"><span class="dot" style="background:#4F7A4A;"></span>verified · source read</span>
+    </div>
+    <p style="max-width:74ch;">Yes — it <b>removes the single most fiddly chunk outright,</b> just not the one its name implies. It's a board-aware (CoreS3 / Core2 / Tough / Core1, auto-detected) plugin framework that exposes M5Stack devices over an <b>HTTPS REST API + live dashboard</b> (also MQTT / SD / serial / LCD). And it already ships <code class="inline">UartDevice_ModuleLLM.h</code>: a complete, <em>debugged</em> integration of the AX630C Module LLM.</p>
+    <div class="twocol" style="gap:30px; margin-top: 8px;">
+      <div>
+        <p style="font-size:13px; margin:0 0 10px;"><b>What it already solves</b> — the exact embedded landmines from the table above:</p>
+        <ul class="bullets" style="margin:0;">
+          <li style="font-size:12.5px;">StackFlow JSON-over-UART via the official <code class="inline">M5Module-LLM</code> lib — <b>async token streaming</b>, never stalls the loop.</li>
+          <li style="font-size:12.5px;">The nastiest AX630C bug — StackFlow <b>unit-leak across host reboots</b> — handled with <code class="inline">sys.reset()</code> + RX-buffer tuning.</li>
+          <li style="font-size:12.5px;">The LLM exposed as <code class="inline">GET /api/llm/set?ask=…</code> + <code class="inline">/api/llm</code>, with a dashboard chat panel, TLS, and auth.</li>
+        </ul>
+      </div>
+      <div>
+        <p style="font-size:13px; margin:0 0 10px;"><b>What it doesn't — and reshapes</b></p>
+        <p style="font-size:12.5px; margin:0 0 10px; color:var(--ink-2);">It makes the CoreS3 a <b>networked Module-LLM micro-service</b> (any device can hit <code class="inline">/api/llm</code>) — <em>not</em> a terminal that forwards. There's no escalation tool and no call out to the Pi or Claude.</p>
+        <p style="font-size:12.5px; margin:0; color:var(--ink-2);">So the routing glue lives <em>outside</em> it: either an orchestrator that calls <code class="inline">/api/llm</code> for trivial turns and Claude Code for hard ones, or a new forwarding plugin you add — clean, since you own the plugin model.</p>
+      </div>
+    </div>
+    <p style="font-size:12.5px; color:var(--ink-2); margin: 18px 0 0; max-width:78ch; border-top:1px solid var(--rule); padding-top:14px;"><b>Net effect:</b> the M5 firmware rung drops from <span style="color:var(--ochre); font-weight:600;">Moderate · 1–3 days</span> to <span style="color:#4F7A4A; font-weight:600;">Easy · hours</span> — the hard-won part is done and battle-tested. But total project effort still barely moves: the <b>Orange Pi NPU + router remains the bottleneck</b>, and this framework doesn't touch it. Its real gift is a clean, networked, extensible base you already control — the ideal place to bolt the escalation forwarder onto.</p>
+  </div>
+</section>
+
+<!-- ════════════════ §12 THE FORWARDING PLUGIN ════════════════ -->
+<section class="block">
+  <div class="head-row">
+    <span class="tag">§ 12</span>
+    <span class="tag">The forwarding plugin</span>
+  </div>
+  <h2 class="section" style="max-width:26ch;"><span class="num">M</span>Two ways to wire the router.</h2>
+  <p style="max-width:64ch;">The “router + voice” tier from §00–§05 can live in one of two places. <b>Option A</b> puts it <em>on the Core</em> as a drop-in framework plugin. <b>Option B</b> puts it in an <em>external orchestrator</em> and leaves the Core firmware untouched. Same job, different home — pick by whether you want the Core self-contained or the routing easy to iterate.</p>
+
+  <h3 class="sub" style="margin-top: 36px; font-size:17px; color:var(--ochre);">Option A · on the Core — <code class="inline" style="font-size:0.8em;">NetDevice_Router.h</code></h3>
+  <p style="max-width:64ch; margin-top:6px;">Makes the CoreS3 the single chat entry point: it classifies each turn on-device, answers trivial ones from the on-board Module LLM, and escalates hard ones to the Pi — which fronts Claude Code.</p>
+
+  <div class="callout" style="margin-top: 24px; border-color: #4F7A4A;">No new base class, no edits to <code class="inline">Framework</code>. <code class="inline">IPinDevice</code> already provides the non-I2C “registered = active via <code class="inline">beginPins()</code>” path — the router just subclasses it, exactly as <code class="inline">IUartDevice</code> does.</p>
+
+  <!-- state machine -->
+  <div style="margin-top: 36px; background: var(--paper-2); border-radius: 4px; padding: 30px 24px 18px;">
+    <svg viewBox="0 0 1060 220" width="100%" height="auto" aria-hidden="true">
+      <g font-family="Geist Mono, monospace">
+        <!-- ask -->
+        <rect x="0" y="86" width="150" height="48" rx="3" fill="white" stroke="var(--ink)" stroke-width="1.3"/>
+        <text x="75" y="106" text-anchor="middle" class="step-title">/api/route/set</text>
+        <text x="75" y="122" text-anchor="middle" class="ann">?ask=…</text>
+
+        <!-- classify -->
+        <path d="M150 110 L208 110" stroke="var(--ink-2)" stroke-width="1.2" fill="none" marker-end="url(#m1)"/>
+        <rect x="210" y="80" width="160" height="60" rx="3" fill="white" stroke="var(--rust)" stroke-width="1.4"/>
+        <text x="290" y="104" text-anchor="middle" class="step-title">_needsEscalation()</text>
+        <text x="290" y="122" text-anchor="middle" class="ann">heuristic · on-device</text>
+
+        <!-- local branch -->
+        <path d="M370 96 C 430 70, 470 60, 540 60" stroke="var(--ochre)" stroke-width="1.3" fill="none" marker-end="url(#m2)"/>
+        <text x="452" y="52" text-anchor="middle" class="ann">trivial</text>
+        <rect x="542" y="34" width="210" height="52" rx="3" fill="white" stroke="var(--ochre)" stroke-width="1.4"/>
+        <text x="647" y="56" text-anchor="middle" class="step-title">Module LLM</text>
+        <text x="647" y="73" text-anchor="middle" class="ann">delegate + mirror toJson()</text>
+
+        <!-- escalate branch -->
+        <path d="M370 124 C 430 150, 470 162, 540 162" stroke="var(--petrol)" stroke-width="1.3" fill="none" marker-end="url(#m3)"/>
+        <text x="452" y="178" text-anchor="middle" class="ann">hard</text>
+        <rect x="542" y="136" width="210" height="52" rx="3" fill="white" stroke="var(--petrol)" stroke-width="1.4" stroke-dasharray="4 4"/>
+        <text x="647" y="158" text-anchor="middle" class="step-title">POST https://pi1/delegate</text>
+        <text x="647" y="175" text-anchor="middle" class="ann">stream SSE in fastPoll()</text>
+
+        <!-- merge to answer -->
+        <path d="M752 60 C 830 60, 850 100, 880 106" stroke="var(--ochre)" stroke-width="1.2" fill="none" marker-end="url(#m1)"/>
+        <path d="M752 162 C 830 162, 850 120, 880 114" stroke="var(--petrol)" stroke-width="1.2" fill="none" marker-end="url(#m1)"/>
+        <rect x="882" y="86" width="170" height="48" rx="3" fill="white" stroke="var(--ink)" stroke-width="1.3"/>
+        <text x="967" y="106" text-anchor="middle" class="step-title">_answer → toJson</text>
+        <text x="967" y="122" text-anchor="middle" class="ann">route_taken · busy · done</text>
+      </g>
+      <defs>
+        <marker id="m1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="var(--ink-2)"/></marker>
+        <marker id="m2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="var(--ochre)"/></marker>
+        <marker id="m3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="var(--petrol)"/></marker>
+      </defs>
+    </svg>
+    <div class="figcap"><b>Fig. M</b> &nbsp;·&nbsp; one async state machine: classify → (local | escalate) → unified streaming answer</div>
+  </div>
+
+  <!-- interface + register -->
+  <div class="twocol" style="margin-top: 44px; gap: 36px; align-items: start;">
+    <div>
+      <h3 class="sub">What it implements</h3>
+      <p class="tight" style="font-size:13.5px;">The same <code class="inline">IDevice</code> surface every plugin exposes — so it gets a dashboard widget, REST endpoint, MQTT, and SD logging with zero extra wiring.</p>
+      <div class="ranklist" style="margin-top:8px;">
+        <div class="rrow"><div class="rrank">slug</div><div class="rname" style="font-size:13px;">route</div><div></div><div class="rwhy"><code class="inline">/api/route/set?ask=…</code> + <code class="inline">/api/route</code></div></div>
+        <div class="rrow"><div class="rrank">ctrl</div><div class="rname" style="font-size:13px;">controlSchema()</div><div></div><div class="rwhy">text box + Clear button auto-render on the dashboard</div></div>
+        <div class="rrow"><div class="rrank">async</div><div class="rname" style="font-size:13px;">wantsFastPoll()</div><div></div><div class="rwhy">streams the reply without ever blocking the loop</div></div>
+        <div class="rrow"><div class="rrank">guard</div><div class="rname" style="font-size:13px;">update()</div><div></div><div class="rwhy"><code class="inline">REPLY_IDLE_MS</code> inactivity timeout, same as the LLM plugin</div></div>
+        <div class="rrow"><div class="rrank">out</div><div class="rname" style="font-size:13px;">toJson()</div><div></div><div class="rwhy"><code class="inline">route_taken</code> = local / escalated → flows to MQTT + SD log</div></div>
+      </div>
+    </div>
+    <div>
+      <h3 class="sub">Register it (one line each)</h3>
+      <pre class="code"><span class="lbl">M5Stack_I2C_Framework.ino</span><span class="c">// the local model — the one UART device</span>
+<span class="k">auto</span>* llm = <span class="k">new</span> UartDevice_ModuleLLM(Serial2, 115200);
+fw.addPlugin(llm);
+
+<span class="c">// the router — hands trivial turns to `llm`,</span>
+<span class="c">// escalates the rest to the Pi orchestrator</span>
+fw.addPlugin(<span class="k">new</span> NetDevice_Router(llm));</pre>
+      <p style="font-size:12.5px; color:var(--muted); margin-top:14px;">Point it at the Pi via the tunables at the top of the file — <code class="inline">PI_HOST</code>, <code class="inline">PI_PATH</code>, <code class="inline">BEARER</code>, <code class="inline">TLS_INSECURE</code>. The CoreS3 never holds the Anthropic key; the Pi does.</p>
+    </div>
+  </div>
+
+  <!-- the decoupling trick -->
+  <div class="twocol" style="margin-top: 40px; gap: 36px; align-items: start;">
+    <div>
+      <h3 class="sub">The decoupling trick</h3>
+      <p style="font-size:13.5px;">For trivial turns it delegates to the Module LLM and then <em>mirrors</em> its streamed answer through the <b>public</b> <code class="inline">toJson()</code> — so it reads the reply with zero coupling to the other plugin's internals. The LLM's own <code class="inline">fastPoll()</code> drives the UART; the router only observes.</p>
+    </div>
+    <div>
+      <pre class="code"><span class="lbl">_pumpLocal() — mirror via public interface</span>JsonDocument d;
+JsonObject o = d.to&lt;JsonObject&gt;();
+_localLlm-&gt;toJson(o);            <span class="c">// public only</span>
+
+String a = o[<span class="s">"answer"</span>] | <span class="s">""</span>;
+<span class="k">if</span> (a.length() &amp;&amp; a != _answer) {
+  _answer  = a;                 <span class="c">// adopt streamed text</span>
+  _lastRxMs = millis();         <span class="c">// keep-alive</span>
+}
+<span class="k">if</span> ((o[<span class="s">"done"</span>] | 0) || !(o[<span class="s">"busy"</span>] | 0))
+  _finish(o[<span class="s">"timed_out"</span>] | 0);</pre>
+    </div>
+  </div>
+
+  <div class="callout" style="margin-top: 36px;">The escalated path expects the Pi to answer <code class="inline">text/event-stream</code> — lines of <code class="inline">data: {"delta":"…"}</code> ending in <code class="inline">data: [DONE]</code>. That's the one seam to match to your orchestrator; it lives entirely in <code class="inline">_consumeLine()</code>. Everything else — classify, delegate, mirror, time-out, dashboard, logging — is done.</div>
+
+  <!-- ─── Option B ─── -->
+  <div style="margin-top: 72px; border-top: 1px solid var(--ink); padding-top: 28px;"></div>
+  <h3 class="sub" style="font-size:17px; color:var(--petrol);">Option B · external orchestrator — <code class="inline" style="font-size:0.8em;">orchestrator.py</code></h3>
+  <p style="max-width:64ch; margin-top:6px;">The same routing, moved <em>off</em> the Core into a small Python service (runs on the Pi or any box). <b>The Core needs zero new firmware</b> — the <code class="inline">/api/llm</code> endpoint that <code class="inline">UartDevice_ModuleLLM.h</code> already exposes <em>is</em> the trivial path. And it's mostly the Pi orchestrator you were going to write anyway, with one branch that calls the Core instead of Claude.</p>
+
+  <div class="callout" style="margin-top: 22px; border-color: #4F7A4A;">Lower effort than Option A: ~150–200 lines of plain Python, no MCU async, no reflash to change routing. You iterate the classifier in seconds.</div>
+
+  <div class="twocol" style="margin-top: 36px; gap: 36px; align-items: start;">
+    <div>
+      <h3 class="sub">The shape of it</h3>
+      <p class="tight" style="font-size:13.5px;">Three pieces: a Core client (fire-and-poll <code class="inline">/api/llm</code>), a one-line classifier, and a streamed shell-out to <code class="inline">claude -p</code>. A <code class="inline">handle()</code> generator ties them together and keeps a short history for the brief.</p>
+      <div class="ranklist" style="margin-top:8px;">
+        <div class="rrow"><div class="rrank">in</div><div class="rname" style="font-size:13px;">handle(msg)</div><div></div><div class="rwhy">terminal loop, or import into a web/API front-end</div></div>
+        <div class="rrow"><div class="rrank">local</div><div class="rname" style="font-size:13px;">CoreClient.ask()</div><div></div><div class="rwhy"><code class="inline">/set?ask=</code> then poll <code class="inline">/api/llm</code> until <code class="inline">done</code></div></div>
+        <div class="rrow"><div class="rrank">hard</div><div class="rname" style="font-size:13px;">run_claude()</div><div></div><div class="rwhy">streams <code class="inline">stream-json</code> events; paraphrases progress</div></div>
+        <div class="rrow"><div class="rrank">brief</div><div class="rname" style="font-size:13px;">build_brief()</div><div></div><div class="rwhy">renders the §03 brief from goal + chat summary</div></div>
+      </div>
+    </div>
+    <div>
+      <pre class="code"><span class="lbl">orchestrator.py — the trivial path</span><span class="k">def</span> <span class="n">ask</span>(self, prompt, idle=<span class="m">60</span>):
+    self._get(<span class="s">"/api/llm/set"</span>, ask=prompt)
+    last, prev = time.time(), <span class="s">""</span>
+    <span class="k">while</span> time.time() - last &lt; idle:
+        s = self._get(<span class="s">"/api/llm"</span>)
+        <span class="k">if</span> s[<span class="s">"answer"</span>] != prev:        <span class="c"># streaming</span>
+            prev, last = s[<span class="s">"answer"</span>], time.time()
+        <span class="k">if</span> s[<span class="s">"done"</span>] <span class="k">or</span> s[<span class="s">"timed_out"</span>]:
+            <span class="k">return</span> s[<span class="s">"answer"</span>]
+        time.sleep(<span class="m">0.3</span>)
+
+<span class="c"># route one turn</span>
+<span class="k">if</span> needs_claude(msg):
+    <span class="k">for</span> kind, text <span class="k">in</span> run_claude(brief, workdir):
+        ...                              <span class="c"># stream to user</span>
+<span class="k">else</span>:
+    answer = core.ask(msg)               <span class="c"># CoreS3</span></pre>
+    </div>
+  </div>
+
+  <!-- tradeoff table -->
+  <h3 class="sub" style="margin-top: 44px;">Which option to pick</h3>
+  <div style="margin-top: 14px; border: 1px solid var(--rule); border-radius: 4px; overflow:hidden;">
+    <div style="display:grid; grid-template-columns: 1.3fr 1fr 1fr; font-size:13px;">
+      <div style="padding:14px 18px; font-family:'Geist Mono',monospace; font-size:10.5px; letter-spacing:0.1em; text-transform:uppercase; color:var(--muted); border-bottom:1px solid var(--rule);"></div>
+      <div style="padding:14px 18px; font-weight:600; color:var(--ochre); border-bottom:1px solid var(--rule); border-left:1px solid var(--rule);">A · on-device plugin</div>
+      <div style="padding:14px 18px; font-weight:600; color:var(--petrol); border-bottom:1px solid var(--rule); border-left:1px solid var(--rule);">B · external orchestrator</div>
+
+      <div style="padding:13px 18px; color:var(--ink); font-weight:600; border-bottom:1px solid var(--rule);">Core's role</div>
+      <div style="padding:13px 18px; color:var(--ink-2); border-bottom:1px solid var(--rule); border-left:1px solid var(--rule);">self-contained entry point, own dashboard chat box</div>
+      <div style="padding:13px 18px; color:var(--ink-2); border-bottom:1px solid var(--rule); border-left:1px solid var(--rule);">a dumb LLM appliance behind <code class="inline">/api/llm</code></div>
+
+      <div style="padding:13px 18px; color:var(--ink); font-weight:600; border-bottom:1px solid var(--rule);">Routing logic lives</div>
+      <div style="padding:13px 18px; color:var(--ink-2); border-bottom:1px solid var(--rule); border-left:1px solid var(--rule);">on the ESP32 — reflash to change</div>
+      <div style="padding:13px 18px; color:var(--ink-2); border-bottom:1px solid var(--rule); border-left:1px solid var(--rule);">in Python — edit + rerun in seconds</div>
+
+      <div style="padding:13px 18px; color:var(--ink); font-weight:600; border-bottom:1px solid var(--rule);">Works if the other box is off</div>
+      <div style="padding:13px 18px; color:var(--ink-2); border-bottom:1px solid var(--rule); border-left:1px solid var(--rule);">yes — Core still answers locally</div>
+      <div style="padding:13px 18px; color:var(--ink-2); border-bottom:1px solid var(--rule); border-left:1px solid var(--rule);">no — the orchestrator is the brain</div>
+
+      <div style="padding:13px 18px; color:var(--ink); font-weight:600;">Build effort</div>
+      <div style="padding:13px 18px; color:var(--ink-2); border-left:1px solid var(--rule);">moderate — MCU async, TLS</div>
+      <div style="padding:13px 18px; color:#4F7A4A; font-weight:600; border-left:1px solid var(--rule);">low — plain Python</div>
+    </div>
+  </div>
+  <p style="max-width:64ch; margin-top:18px; font-size:13.5px;">For iterating on routing — the part you'll tune most — Option B wins easily. Option A wins only when you want the CoreS3 to be a standalone desk device that still works with the Pi powered down. They're not exclusive: run B today to find your thresholds, bake them into A later if you want the appliance.</p>
+</section>
+
+<!-- ════════════════ §13 CALL CLAUDE DIRECTLY? ════════════════ -->
+<section class="block">
+  <div class="head-row">
+    <span class="tag">§ 13</span>
+    <span class="tag">Can the Core call Claude itself?</span>
+  </div>
+  <h2 class="section" style="max-width:28ch;"><span class="num">N</span>Yes — but mind the word “Code.”</h2>
+  <p style="max-width:64ch;">The CoreS3 can reach the cloud on its own — it has WiFi and TLS already. But “ask Claude” splits into two very different things, and only one of them fits on an ESP32.</p>
+
+  <!-- the distinction -->
+  <div class="twocol" style="margin-top: 32px; gap: 28px;">
+    <div style="border:1px solid #4F7A4A; border-radius:4px; padding:22px 24px; background: #F2F5EF;">
+      <div style="font-family:'Geist Mono',monospace; font-size:10.5px; letter-spacing:0.14em; text-transform:uppercase; color:#4F7A4A; margin-bottom:10px;">✓ Fits on the Core</div>
+      <h3 class="sub" style="font-size:18px;">Claude — the API</h3>
+      <p style="font-size:13.5px; margin:0;">Text in, text out. A chatbot reply: <em>“explain this trace,” “draft this regex,” “summarise this.”</em> The Core POSTs to <code class="inline">api.anthropic.com/v1/messages</code> and streams the answer back. ~80-line plugin.</p>
+    </div>
+    <div style="border:1px solid var(--rust); border-radius:4px; padding:22px 24px; background: #F6EEEC;">
+      <div style="font-family:'Geist Mono',monospace; font-size:10.5px; letter-spacing:0.14em; text-transform:uppercase; color:var(--rust); margin-bottom:10px;">✗ Cannot run on the Core</div>
+      <h3 class="sub" style="font-size:18px;">Claude Code — the agent</h3>
+      <p style="font-size:13.5px; margin:0;">Needs a <b>filesystem, shell, git repo, and Node</b> to run its read→edit→test loop. The ESP32 has none of these. It can <em>trigger</em> Claude Code on the Pi — never <em>be</em> it.</p>
+    </div>
+  </div>
+
+  <div class="callout" style="margin-top: 30px;">A direct call gets you a <em>worded answer</em>, not <em>a code change with a diff and passing tests</em> — which was the entire reason hard turns escalate in the first place. For anything that touches a codebase, Claude Code still has to run where the repo lives.</div>
+
+  <!-- why you usually still route through the Pi -->
+  <div style="margin-top: 36px;">
+    <h3 class="sub">Even for pure text, three reasons to think twice</h3>
+    <div class="threecol" style="margin-top: 16px;">
+      <div>
+        <div style="font-family:'Geist Mono',monospace; font-size:11px; color:var(--rust); margin-bottom:6px;">01 · KEY EXPOSURE</div>
+        <p style="font-size:13px; margin:0;">The API key sits in firmware on a desk gadget whose flash can be read. The Pi keeps it on a real machine you control.</p>
+      </div>
+      <div>
+        <div style="font-family:'Geist Mono',monospace; font-size:11px; color:var(--rust); margin-bottom:6px;">02 · NO TOOLS</div>
+        <p style="font-size:13px; margin:0;">Exactly what you escalate <em>for</em> — repo edits, running tests — is what a direct call can't do.</p>
+      </div>
+      <div>
+        <div style="font-family:'Geist Mono',monospace; font-size:11px; color:var(--rust); margin-bottom:6px;">03 · GUTS THE DESIGN</div>
+        <p style="font-size:13px; margin:0;">If the Core just phones the cloud, the local NPU tier is pointless — you've built a thin cloud client with a screen.</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- the tasteful middle: 3-way router -->
+  <div style="margin-top: 44px; background: var(--paper-2); border-radius: 4px; padding: 30px 28px;">
+    <h3 class="sub" style="font-size:15px;">The tasteful use: a three-way router</h3>
+    <p style="max-width:74ch; font-size:13.5px;">If you do add it, don't make it the default — make it the <em>middle</em> of three routes. Trivial stays local; “smart text with no repo” goes to the Claude API; genuine coding tasks still escalate to Claude Code on the Pi. Cheap things stay cheap, you get a strong cloud answer when no codebase is involved, and the full agent only spins up when there's actually something to edit.</p>
+    <svg viewBox="0 0 1000 110" width="100%" height="auto" aria-hidden="true" style="margin-top:10px;">
+      <g font-family="Geist Mono, monospace" font-size="11">
+        <rect x="0" y="40" width="150" height="44" rx="3" fill="white" stroke="var(--ink)" stroke-width="1.3"/>
+        <text x="75" y="60" text-anchor="middle" class="step-title">turn arrives</text>
+        <text x="75" y="75" text-anchor="middle" class="ann">classify</text>
+
+        <!-- three branches -->
+        <path d="M150 50 C 210 32, 250 22, 320 22" stroke="var(--rust)" stroke-width="1.3" fill="none" marker-end="url(#n2)"/>
+        <path d="M150 62 L318 62" stroke="var(--petrol)" stroke-width="1.3" fill="none" marker-end="url(#n3)"/>
+        <path d="M150 74 C 210 92, 250 102, 320 102" stroke="var(--ink-2)" stroke-width="1.3" fill="none" marker-end="url(#n1)"/>
+
+        <rect x="322" y="4" width="220" height="38" rx="3" fill="white" stroke="var(--rust)" stroke-width="1.3"/>
+        <text x="432" y="22" text-anchor="middle" class="step-title">trivial</text>
+        <text x="432" y="35" text-anchor="middle" class="ann">→ local Module LLM</text>
+
+        <rect x="322" y="45" width="220" height="34" rx="3" fill="white" stroke="var(--petrol)" stroke-width="1.3"/>
+        <text x="432" y="66" text-anchor="middle" class="step-title" fill="var(--petrol)">smart text, no repo → Claude API</text>
+
+        <rect x="322" y="83" width="220" height="24" rx="3" fill="white" stroke="var(--ink)" stroke-width="1.3" stroke-dasharray="3 3"/>
+        <text x="432" y="99" text-anchor="middle" class="ann">coding task → Claude Code (Pi)</text>
+
+        <text x="600" y="40" class="ann">cheap stays cheap ·</text>
+        <text x="600" y="56" class="ann">cloud only when it helps ·</text>
+        <text x="600" y="72" class="ann">agent only with a repo</text>
+      </g>
+      <defs>
+        <marker id="n1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="var(--ink-2)"/></marker>
+        <marker id="n2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="var(--rust)"/></marker>
+        <marker id="n3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="var(--petrol)"/></marker>
+      </defs>
+    </svg>
+    <p style="font-size:12.5px; color:var(--muted); margin: 14px 0 0;">The direct-API branch ships as <code class="inline">NetDevice_ClaudeAPI.h</code> — a sibling to <code class="inline">NetDevice_Router.h</code>, same <code class="inline">IPinDevice</code> base, same streaming pattern. Register it and add one branch to the router's classifier.</p>
+  </div>
+</section>
+
+<!-- ════════════════ §14 TWO TOPOLOGIES ════════════════ -->
+<section class="block">
+  <div class="head-row">
+    <span class="tag">§ 14</span>
+    <span class="tag">Two deployment shapes</span>
+  </div>
+  <h2 class="section" style="max-width:26ch;"><span class="num">O</span>Core alone, or Core with a Pi.</h2>
+  <p style="max-width:64ch;">The same CoreS3 firmware supports two very different topologies, decided entirely by which plugins you register. Pick by one question: <em>do you need work that touches a real codebase?</em> If never, the Core stands alone. If yes, a Pi (or any always-on box) joins as the agent tier.</p>
+
+  <!-- ── Topology A: no Pi ── -->
+  <div style="margin-top: 44px;">
+    <div style="display:flex; align-items:baseline; gap:14px; margin-bottom:6px;">
+      <h3 class="sub" style="font-size:18px; margin:0;">A · Core alone — no Pi</h3>
+      <span class="pill rust"><span class="dot"></span>two tiers</span>
+    </div>
+    <p style="max-width:64ch; font-size:13.5px;">The CoreS3 is the whole device. It answers trivial turns from its on-board Module LLM, and — optionally — sends “smart text” turns straight to the Claude <b>API</b> over the internet. No second machine. There is <b>no Claude Code</b> here: with no filesystem or shell, the Core can get worded answers but never a code change with a diff.</p>
+
+    <div style="margin-top: 22px; background: var(--paper-2); border-radius: 4px; padding: 30px 24px 18px;">
+      <svg viewBox="0 0 1000 260" width="100%" height="auto" aria-hidden="true">
+        <!-- user -->
+        <circle cx="70" cy="130" r="32" fill="white" stroke="var(--user)" stroke-width="1.5"/>
+        <text x="70" y="134" text-anchor="middle" class="lane-label" fill="var(--user)">USER</text>
+        <text x="70" y="184" text-anchor="middle" class="ann">touchscreen</text>
+
+        <!-- core -->
+        <rect x="170" y="60" width="280" height="160" rx="4" fill="white" stroke="var(--rust)" stroke-width="1.6"/>
+        <text x="186" y="86" class="lane-label" fill="var(--rust)">M5STACK CoreS3</text>
+        <line x1="170" y1="100" x2="450" y2="100" stroke="var(--rust-soft)" stroke-width="1"/>
+        <text x="186" y="124" class="step-title">Module LLM · Qwen2.5-0.5B</text>
+        <text x="186" y="142" class="step-text">on-board · /api/llm</text>
+        <text x="186" y="168" class="step-title" fill="var(--petrol)">NetDevice_ClaudeAPI (optional)</text>
+        <text x="186" y="186" class="step-text">/api/claude · direct HTTPS</text>
+        <text x="186" y="204" class="ann">classify on-device</text>
+
+        <!-- user <-> core -->
+        <path d="M102 122 L168 110" stroke="var(--ink-2)" stroke-width="1.2" fill="none" marker-end="url(#oa)"/>
+        <path d="M168 140 L102 150" stroke="var(--ink-2)" stroke-width="1.2" fill="none" marker-end="url(#oa)"/>
+
+        <!-- to claude api -->
+        <path d="M450 150 L600 150" stroke="var(--petrol)" stroke-width="1.3" fill="none" marker-end="url(#op)" stroke-dasharray="5 4"/>
+        <text x="470" y="140" class="ann">smart text only</text>
+        <rect x="602" y="116" width="200" height="68" rx="4" fill="white" stroke="var(--petrol)" stroke-width="1.4" stroke-dasharray="4 5"/>
+        <text x="702" y="142" text-anchor="middle" class="lane-label" fill="var(--petrol)">CLAUDE API</text>
+        <text x="702" y="162" text-anchor="middle" class="step-text">model · text in/out</text>
+        <text x="702" y="178" text-anchor="middle" class="ann">no tools · no repo</text>
+
+        <!-- no claude code marker -->
+        <text x="702" y="214" text-anchor="middle" class="ann-i" fill="var(--rust)">✗ no Claude Code — no agent</text>
+
+        <!-- boundaries -->
+        <rect x="150" y="40" width="320" height="200" rx="2" fill="none" stroke="var(--rule-strong)" stroke-dasharray="2 5"/>
+        <text x="160" y="58" class="ann">ONE DEVICE · ON THE DESK</text>
+        <text x="612" y="108" class="ann">INTERNET</text>
+
+        <defs>
+          <marker id="oa" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="var(--ink-2)"/></marker>
+          <marker id="op" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="var(--petrol)"/></marker>
+        </defs>
+      </svg>
+      <div class="figcap"><b>Fig. O-A</b> &nbsp;·&nbsp; Core alone. Plugins: <code class="inline" style="font-size:0.85em;">UartDevice_ModuleLLM</code> + optional <code class="inline" style="font-size:0.85em;">NetDevice_ClaudeAPI</code>.</div>
+    </div>
+
+    <div class="threecol" style="margin-top: 24px;">
+      <div><h3 class="sub" style="font-size:12px;">Good for</h3><p style="font-size:12.5px; margin:0;">A self-contained desk assistant: Q&amp;A, drafting, explaining. Works with the network down for local turns.</p></div>
+      <div><h3 class="sub" style="font-size:12px;">Cost / setup</h3><p style="font-size:12.5px; margin:0;">One device. No server to run or maintain. Flash and go.</p></div>
+      <div><h3 class="sub" style="font-size:12px;">The ceiling</h3><p style="font-size:12.5px; margin:0;">Answers only. No file edits, no tests, no diffs — and the API key lives in firmware.</p></div>
+    </div>
+  </div>
+
+  <!-- ── Topology B: with Pi ── -->
+  <div style="margin-top: 64px; border-top: 1px solid var(--rule); padding-top: 36px;">
+    <div style="display:flex; align-items:baseline; gap:14px; margin-bottom:6px;">
+      <h3 class="sub" style="font-size:18px; margin:0;">B · Core with a Pi — the full ladder</h3>
+      <span class="pill" style="border-color:var(--ochre);"><span class="dot" style="background:var(--ochre);"></span>three tiers</span>
+    </div>
+    <p style="max-width:64ch; font-size:13.5px;">The Core becomes the front-end and router; a Pi (or any always-on Linux box) joins as the brain + agent host. Trivial turns stay on the Core, hard ones escalate to an orchestrator on the Pi, which runs <b>Claude Code</b> against a real git checkout and streams a summary + diff back. This is the only shape that <em>finishes</em> coding work.</p>
+
+    <div style="margin-top: 22px; background: var(--paper-2); border-radius: 4px; padding: 30px 24px 18px;">
+      <svg viewBox="0 0 1000 280" width="100%" height="auto" aria-hidden="true">
+        <!-- user -->
+        <circle cx="60" cy="140" r="30" fill="white" stroke="var(--user)" stroke-width="1.5"/>
+        <text x="60" y="144" text-anchor="middle" class="lane-label" fill="var(--user)">USER</text>
+
+        <!-- core -->
+        <rect x="138" y="80" width="210" height="120" rx="4" fill="white" stroke="var(--rust)" stroke-width="1.6"/>
+        <text x="154" y="104" class="lane-label" fill="var(--rust)">CoreS3 · FRONT-END</text>
+        <line x1="138" y1="116" x2="348" y2="116" stroke="var(--rust-soft)" stroke-width="1"/>
+        <text x="154" y="138" class="step-text">Module LLM (trivial)</text>
+        <text x="154" y="158" class="step-title" fill="var(--ochre)">NetDevice_Router</text>
+        <text x="154" y="176" class="step-text">classify · escalate</text>
+
+        <path d="M90 132 L136 122" stroke="var(--ink-2)" stroke-width="1.2" fill="none" marker-end="url(#ob)"/>
+        <path d="M136 150 L90 158" stroke="var(--ink-2)" stroke-width="1.2" fill="none" marker-end="url(#ob)"/>
+
+        <!-- pi -->
+        <rect x="408" y="60" width="240" height="160" rx="4" fill="white" stroke="var(--ochre)" stroke-width="1.6"/>
+        <text x="424" y="84" class="lane-label" fill="var(--ochre)">ORANGE PI · BRAIN</text>
+        <line x1="408" y1="96" x2="648" y2="96" stroke="var(--ochre-soft)" stroke-width="1"/>
+        <text x="424" y="118" class="step-text">orchestrator.py · /delegate</text>
+        <text x="424" y="138" class="step-text">RKLLama 7B (NPU) router</text>
+        <text x="424" y="160" class="step-title">claude CLI · headless -p</text>
+        <text x="424" y="178" class="step-text">runs on a git checkout</text>
+        <text x="424" y="200" class="ann">read · edit · bash · test</text>
+
+        <!-- core <-> pi -->
+        <path d="M348 130 L406 120" stroke="var(--rust)" stroke-width="1.3" fill="none" marker-end="url(#oc)"/>
+        <text x="356" y="112" class="ann">escalate</text>
+        <path d="M406 156 L348 166" stroke="var(--petrol)" stroke-width="1.3" fill="none" marker-end="url(#od)"/>
+        <text x="356" y="182" class="ann">stream back</text>
+
+        <!-- claude code -->
+        <path d="M648 140 L760 140" stroke="var(--petrol)" stroke-width="1.3" fill="none" marker-end="url(#od)" stroke-dasharray="5 4"/>
+        <rect x="762" y="104" width="200" height="72" rx="4" fill="white" stroke="var(--petrol)" stroke-width="1.4" stroke-dasharray="4 5"/>
+        <text x="862" y="130" text-anchor="middle" class="lane-label" fill="var(--petrol)">CLAUDE CODE</text>
+        <text x="862" y="150" text-anchor="middle" class="step-text">the agent · API</text>
+        <text x="862" y="166" text-anchor="middle" class="ann">summary + diff</text>
+
+        <!-- boundary -->
+        <rect x="118" y="40" width="530" height="220" rx="2" fill="none" stroke="var(--rule-strong)" stroke-dasharray="2 5"/>
+        <text x="128" y="58" class="ann">YOUR NETWORK · ON-PREM</text>
+        <text x="772" y="98" class="ann">INTERNET · only the hard part leaves</text>
+
+        <defs>
+          <marker id="ob" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="var(--ink-2)"/></marker>
+          <marker id="oc" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="var(--rust)"/></marker>
+          <marker id="od" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="var(--petrol)"/></marker>
+        </defs>
+      </svg>
+      <div class="figcap"><b>Fig. O-B</b> &nbsp;·&nbsp; Core + Pi. Plugins: <code class="inline" style="font-size:0.85em;">UartDevice_ModuleLLM</code> + <code class="inline" style="font-size:0.85em;">NetDevice_Router</code> → <code class="inline" style="font-size:0.85em;">orchestrator.py</code> → Claude Code.</div>
+    </div>
+
+    <div class="threecol" style="margin-top: 24px;">
+      <div><h3 class="sub" style="font-size:12px;">Good for</h3><p style="font-size:12.5px; margin:0;">Real coding: refactors, tests, debugging that produce a diff. Cheap turns stay local; the key stays on the Pi.</p></div>
+      <div><h3 class="sub" style="font-size:12px;">Cost / setup</h3><p style="font-size:12.5px; margin:0;">A second always-on box plus the orchestrator. The NPU tier is where the real build effort lives (§11).</p></div>
+      <div><h3 class="sub" style="font-size:12px;">The payoff</h3><p style="font-size:12.5px; margin:0;">Only the genuinely hard part ever reaches the cloud — the agent runs where your code is.</p></div>
+    </div>
+  </div>
+
+  <div class="callout" style="margin-top: 40px;">Same firmware, same Config.h. Topology A is <code class="inline">ModuleLLM</code> (+ optional <code class="inline">ClaudeAPI</code>); Topology B adds <code class="inline">NetDevice_Router</code> pointed at a Pi. You can start with A on the bench and grow into B by registering one more plugin and standing up the orchestrator — nothing else changes.</div>
+</section>
+
+<!-- ════════════════ §15 A + B TOGETHER ════════════════ -->
+<section class="block">
+  <div class="head-row">
+    <span class="tag">§ 15</span>
+    <span class="tag">Running A and B together</span>
+  </div>
+  <h2 class="section" style="max-width:26ch;"><span class="num">P</span>One router, three destinations.</h2>
+  <p style="max-width:64ch;">The two topologies aren't exclusive — kept live at once, they make the Core a <b>three-way router</b>. The classifier picks per turn: trivial stays local, “smart text” with no repo takes one hop to the Claude <b>API</b>, and genuine coding escalates to <b>Claude Code</b> on the Pi. Cheap stays cheap; the heavy agent only wakes for work that produces a diff.</p>
+
+  <!-- three-route diagram -->
+  <div style="margin-top: 36px; background: var(--paper-2); border-radius: 4px; padding: 30px 24px 18px;">
+    <svg viewBox="0 0 1000 260" width="100%" height="auto" aria-hidden="true">
+      <g font-family="Geist Mono, monospace" font-size="11">
+        <!-- classify -->
+        <rect x="0" y="100" width="170" height="58" rx="3" fill="white" stroke="var(--ink)" stroke-width="1.4"/>
+        <text x="85" y="124" text-anchor="middle" class="step-title">_classify()</text>
+        <text x="85" y="142" text-anchor="middle" class="ann">on-device · ~0 ms</text>
+
+        <!-- three branches -->
+        <path d="M170 118 C 240 70, 280 50, 360 50" stroke="var(--rust)" stroke-width="1.4" fill="none" marker-end="url(#pa)"/>
+        <path d="M170 129 L358 129" stroke="var(--petrol)" stroke-width="1.4" fill="none" marker-end="url(#pb)"/>
+        <path d="M170 140 C 240 188, 280 208, 360 208" stroke="var(--ochre)" stroke-width="1.4" fill="none" marker-end="url(#pc)"/>
+
+        <!-- local -->
+        <rect x="362" y="26" width="250" height="48" rx="3" fill="white" stroke="var(--rust)" stroke-width="1.4"/>
+        <text x="378" y="46" class="step-title" fill="var(--rust)">LOCAL · Module LLM</text>
+        <text x="378" y="63" class="ann">trivial · private · offline-safe</text>
+        <text x="630" y="46" class="ann">route_taken</text>
+        <text x="630" y="61" class="ann">= "local"</text>
+
+        <!-- direct api -->
+        <rect x="362" y="105" width="250" height="48" rx="3" fill="white" stroke="var(--petrol)" stroke-width="1.4"/>
+        <text x="378" y="125" class="step-title" fill="var(--petrol)">DIRECT · Claude API</text>
+        <text x="378" y="142" class="ann">smart text · no repo · one hop</text>
+        <text x="630" y="125" class="ann">route_taken</text>
+        <text x="630" y="140" class="ann">= "direct_api"</text>
+
+        <!-- escalate -->
+        <rect x="362" y="184" width="250" height="48" rx="3" fill="white" stroke="var(--ochre)" stroke-width="1.4"/>
+        <text x="378" y="204" class="step-title" fill="var(--ochre)">ESCALATE · Pi → Claude Code</text>
+        <text x="378" y="221" class="ann">coding · the agent · diff</text>
+        <text x="630" y="204" class="ann">route_taken</text>
+        <text x="630" y="219" class="ann">= "escalated"</text>
+
+        <!-- ordering note -->
+        <text x="770" y="120" class="ann-i" font-size="13">coding wins first,</text>
+        <text x="770" y="140" class="ann-i" font-size="13">then smart-text,</text>
+        <text x="770" y="160" class="ann-i" font-size="13">else local.</text>
+      </g>
+      <defs>
+        <marker id="pa" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="var(--rust)"/></marker>
+        <marker id="pb" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="var(--petrol)"/></marker>
+        <marker id="pc" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="var(--ochre)"/></marker>
+      </defs>
+    </svg>
+    <div class="figcap"><b>Fig. P</b> &nbsp;·&nbsp; <code class="inline" style="font-size:0.85em;">_classify()</code> → local | direct_api | escalated, each streamed back the same way.</div>
+  </div>
+
+  <!-- when it earns its keep -->
+  <div class="twocol" style="margin-top: 44px; gap: 36px;">
+    <div>
+      <h3 class="sub">Two cases that earn the third route</h3>
+      <ul class="bullets" style="margin-top:10px;">
+        <li><b>Latency &amp; cost.</b> A one-hop API answer beats booting the full Claude Code agent — tool loop, repo read, test run — for a question that yields no diff.</li>
+        <li><b>Resilience.</b> With the Pi powered down, smart-text answers keep working over the API; the device isn't reduced to just the 0.5B. The local tier still covers offline.</li>
+      </ul>
+      <p style="font-size:13px; margin-top:14px;">Each path also backstops a different failure: lose the <em>internet</em> and local still answers; lose the <em>Pi</em> and the API still answers.</p>
+    </div>
+    <div>
+      <h3 class="sub">The cost you accept</h3>
+      <div class="callout" style="margin-top:6px; border-color: var(--rust);">The third route means <code class="inline">CLAUDE_API_KEY</code> now lives in the Core's <em>flash</em> — a second key surface beside the Pi's. Worth it only if surviving a Pi outage matters to you.</div>
+      <p style="font-size:13px; margin-top:14px;">If it doesn't, keep <code class="inline">ROUTER_DIRECT_API</code> <b>off</b> and let the Pi orchestrator own every cloud call — the Core then holds no key at all. That's the safer default; the third route is opt-in.</p>
+    </div>
+  </div>
+
+  <!-- two architectures -->
+  <h3 class="sub" style="margin-top: 48px;">Two ways to place the three routes</h3>
+  <div class="twocol" style="margin-top: 16px; gap: 0;">
+    <div class="ledger-col" style="border:1px solid var(--rule); border-radius:4px 0 0 4px;">
+      <h4 style="color:#4F7A4A;">Preferred · key stays on the Pi</h4>
+      <p style="font-size:13px; margin:0 0 10px;">The Core only ever calls the Pi. The orchestrator does the three-way itself — local-via-Core, direct-API, or Claude Code. The Core holds no key.</p>
+      <p style="font-size:12.5px; color:var(--muted); margin:0;">Simplest and safest. The trade: the direct-API path dies when the Pi is off.</p>
+    </div>
+    <div class="ledger-col" style="border:1px solid var(--rule); border-left:none; border-radius:0 4px 4px 0; background:var(--paper-2);">
+      <h4 style="color:var(--ochre);">Resilience · key on the Core</h4>
+      <p style="font-size:13px; margin:0 0 10px;">Register both <code class="inline">NetDevice_ClaudeAPI</code> and <code class="inline">NetDevice_Router</code> on the Core; the router gains a third branch that calls the API plugin directly.</p>
+      <p style="font-size:12.5px; color:var(--muted); margin:0;">Survives a Pi outage — at the cost of the key in flash. This is “A + B truly together on the device.”</p>
+    </div>
+  </div>
+
+  <pre class="code" style="margin-top: 32px;"><span class="lbl">M5Stack_I2C_Framework.ino — resilience wiring</span><span class="c">// Config.h:  #define ROUTER_DIRECT_API true</span>
+<span class="k">auto</span>* llm = <span class="k">new</span> UartDevice_ModuleLLM(Serial2, 115200);
+<span class="k">auto</span>* api = <span class="k">new</span> NetDevice_ClaudeAPI();          <span class="c">// the direct route</span>
+fw.addPlugin(llm);
+fw.addPlugin(api);
+fw.addPlugin(<span class="k">new</span> NetDevice_Router(llm, api));      <span class="c">// local + direct + escalate</span></pre>
+  <p style="font-size:12.5px; color:var(--muted); margin-top:14px; max-width:72ch;">The router drives <em>both</em> the Module LLM and the Claude-API plugin through their public <code class="inline">command()</code>/<code class="inline">toJson()</code> — same decoupled mirror it already uses — so the third route added no new transport code, just one more branch in <code class="inline">_classify()</code>. Tune what counts as “smart text” with <code class="inline">ROUTER_DIRECT_KEYWORDS</code> and <code class="inline">ROUTER_DIRECT_MIN_WORDS</code> in Config.h.</p>
+</section>
+
+<footer class="foot">
+  <div>LOCAL LLM &nbsp;·&nbsp; CLAUDE CODE &nbsp;·&nbsp; A QUIET HANDOFF</div>
+  <div>v1 &nbsp;·&nbsp; 2026</div>
+</footer>
+
+</div>
+</body>
+</html>

@@ -177,6 +177,23 @@
 #include "plugins/UartDevice_ModuleLLM.h"
 #endif  // ENABLE_UART_DEVICES
 
+// ── Network devices — Claude escalation (no I2C, over WiFi) ──
+//  Pure network clients (subclass IPinDevice; the boot scan skips
+//  them).  Header-only and lightweight, so they're always compiled
+//  in — there's no category switch.  Behaviour is driven entirely
+//  by the ROUTER_* / CLAUDE_* settings in Config.h.  See the
+//  escalation-ladder doc (§12–§15) for the full picture.
+//
+//    NetDevice_Router      trivial → local, hard → Pi (Claude Code)
+//    NetDevice_ClaudeAPI   optional 3rd "smart text" route, direct
+//                          to the Anthropic API.  Only pulled in
+//                          when ROUTER_DIRECT_API is true (Config.h),
+//                          because that route puts a key in flash.
+#include "plugins/NetDevice_Router.h"
+#if ROUTER_DIRECT_API
+#include "plugins/NetDevice_ClaudeAPI.h"
+#endif
+
 Framework fw;
 
 void setup() {
@@ -335,6 +352,35 @@ void setup() {
   // fw.addPlugin(new UartDevice_GPS(Serial2, 9600));
 //  fw.addPlugin(new UartDevice_ModuleLLM(Serial2, 115200));  // offline AI text chat
 #endif  // ENABLE_UART_DEVICES
+
+  // ── Offline AI + Claude escalation ───────────────────────
+  //  The Module LLM is the on-board LOCAL model.  It lives on Port-C,
+  //  so it counts as the single UART device (don't also register a
+  //  Barcode / Modem / GPS / ASR above — they share that one port).
+  //  The router + optional direct-API plugin are NETWORK clients,
+  //  reached over WiFi.  All three are tuned from Config.h.
+  //
+  //  Wiring follows the "two architectures" in §15:
+  //    • ROUTER_DIRECT_API false (default) → two-way router.  Local +
+  //      escalate-to-Pi only; the Pi orchestrator owns every cloud
+  //      call, so THIS device holds no API key.  (Preferred.)
+  //    • ROUTER_DIRECT_API true → three-way router.  Also registers
+  //      NetDevice_ClaudeAPI and hands it to the router, so "smart
+  //      text" turns go straight to the Anthropic API and survive a
+  //      Pi outage — at the cost of CLAUDE_API_KEY living in flash.
+  IDevice* moduleLLM = nullptr;
+#if ENABLE_UART_DEVICES
+  moduleLLM = new UartDevice_ModuleLLM(Serial2, 115200);  // local model
+  fw.addPlugin(moduleLLM);
+#endif  // ENABLE_UART_DEVICES
+
+#if ROUTER_DIRECT_API
+  auto* claudeAPI = new NetDevice_ClaudeAPI();            // direct "smart text" route
+  fw.addPlugin(claudeAPI);
+  fw.addPlugin(new NetDevice_Router(moduleLLM, claudeAPI));
+#else
+  fw.addPlugin(new NetDevice_Router(moduleLLM));          // local + escalate-to-Pi
+#endif
 
   fw.begin();
 }

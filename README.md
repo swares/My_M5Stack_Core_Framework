@@ -833,6 +833,74 @@ way the Step Motor I2C side was.
 
 ---
 
+## Network Devices (Claude API + escalation router)
+
+Two plugins extend the framework beyond the board's own buses out onto
+the network. Both are pure HTTPS clients, so neither is an I2C or UART
+device: they subclass `IPinDevice` (which already gives "no address,
+activate once via `beginPins()`"), report no I2C address so the boot
+scan skips them, and need **no changes to `Framework`**. Both are
+*controllable* and stream their reply asynchronously into the same
+dashboard / REST / MQTT / SD plumbing as every other device, exactly
+like the Module LLM.
+
+| `NetDevice` file | Role | Constructor | Endpoints | Settings |
+|---|---|---|---|---|
+| `NetDevice_ClaudeAPI.h` | Direct Anthropic Messages API client | `()` | `GET /api/claude/set?ask=…` · `?clear=1` | `CLAUDE_*` in `Config.h` |
+| `NetDevice_Router.h` | On-device classify → local / cloud / agent | `(localLlm[, directApi])` | `GET /api/route/set?ask=…` · `?clear=1` | `ROUTER_*` in `Config.h` |
+
+`NetDevice_ClaudeAPI` POSTs to `api.anthropic.com/v1/messages` with
+streaming enabled and folds the SSE `content_block_delta` text into
+`answer`. It returns Claude the **model** — text in, text out — **not
+Claude Code**: there is no filesystem, shell, or tool loop on the
+ESP32, so anything that must read or edit a codebase still has to reach
+Claude Code elsewhere. The key trade-off is that `CLAUDE_API_KEY` lives
+in firmware flash, which can be read off a desk device — scope it
+tightly, rotate it if it leaks, and keep `Config.h` out of public
+version control. Leave `CLAUDE_API_KEY` empty to keep the plugin
+compiled-in but inert.
+
+`NetDevice_Router` is the single chat entry point. On each turn it
+classifies the prompt **on-device** (a fast keyword / file-extension /
+path heuristic, biased toward escalating) and picks one of three routes:
+
+- **local** — delegates to the on-board Module LLM via its public
+  `command("ask", …)` and mirrors its streamed answer through
+  `toJson()`. Fully decoupled — no edits to `UartDevice_ModuleLLM`.
+- **direct_api** *(optional 3rd route, `ROUTER_DIRECT_API`)* — a
+  non-coding turn that is too rich for the small local model but needs
+  no repo goes straight to a `NetDevice_ClaudeAPI` plugin, skipping the
+  Pi. This is the route that puts an API key in flash.
+- **escalated** — a coding / agent task opens a `WiFiClientSecure` to
+  your Orange Pi orchestrator (`ROUTER_PI_*`), POSTs a brief, and
+  streams back the SSE reply. In this mode **the CoreS3 never holds the
+  Anthropic key** — the Pi owns Claude Code.
+
+The chosen route is published as `route_taken` (`local` / `direct_api`
+/ `escalated`), so local-vs-cloud accounting flows to MQTT and the SD
+log for free. Register the local model first so the router can delegate
+to it; the `.ino` wires both architectures behind `ROUTER_DIRECT_API`:
+
+```cpp
+IDevice* moduleLLM = new UartDevice_ModuleLLM(Serial2, 115200);
+fw.addPlugin(moduleLLM);                          // local model first
+#if ROUTER_DIRECT_API                             // 3-way: local → API → Pi
+  auto* claudeAPI = new NetDevice_ClaudeAPI();
+  fw.addPlugin(claudeAPI);
+  fw.addPlugin(new NetDevice_Router(moduleLLM, claudeAPI));
+#else                                             // 2-way: local → Pi (preferred)
+  fw.addPlugin(new NetDevice_Router(moduleLLM));
+#endif
+```
+
+Both connections retry transient TLS-allocation failures (the heap can
+fragment briefly mid-dashboard-handshake) and use an **inactivity**
+timeout, not a total-duration cap, so a long answer that keeps
+streaming stays healthy. With `ROUTER_PI_HOST` left empty the router
+stays compiled-in but inert and answers every turn locally.
+
+---
+
 ## Writing a Custom Plugin
 
 External-unit plugins are completely board-agnostic — they only see the
@@ -1590,6 +1658,7 @@ M5Stack_I2C_Framework/
     `WiFi.softAPIP()` in AP mode — so the address that previously
     appeared only on the 3-second boot splash now stays on screen
     on every panel and the ticker.
+
 54. **Chip-aware ADC1 pin validation** — the boot-time "not an ADC1
     pin" warning in the analog Port-B devices used to hard-code the
     classic ESP32 range (GPIO 32-39), so on the CoreS3 (ESP32-S3) a
@@ -1607,6 +1676,21 @@ M5Stack_I2C_Framework/
     SwitchDoc / uctech clones.  Decodes the 112-bit frame (CRC8) into
     temperature, humidity, wind speed / gust / direction, rainfall,
     UV and light, with a `pair` control to lock onto one sensor ID.
+57. **Network device tier — direct Claude API + escalation router** —
+    two pure-HTTPS plugins that subclass `IPinDevice` (no I2C address,
+    no Framework changes).  `NetDevice_ClaudeAPI` streams the Anthropic
+    Messages API directly (`GET /api/claude/set?ask=…`) for smart
+    *text* answers — the model, not Claude Code — accepting that
+    `CLAUDE_API_KEY` then lives in flash.  `NetDevice_Router` is a
+    single chat entry point that classifies each turn on-device and
+    routes it: trivial → the on-board Module LLM, optional "smart text"
+    → the direct Claude API (`ROUTER_DIRECT_API`), hard / coding → a
+    `WiFiClientSecure` POST to an Orange Pi orchestrator that owns
+    Claude Code (so the device holds no key in that mode).  The chosen
+    route is published as `route_taken` to the dashboard, MQTT and the
+    SD log.  Both retry transient TLS-alloc failures and use an
+    inactivity (not total-duration) reply timeout.  Settings live in
+    the new `CLAUDE_*` / `ROUTER_*` blocks in `Config.h`.
 
 ---
 
