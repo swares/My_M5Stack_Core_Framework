@@ -206,10 +206,20 @@ class NetDevice_Router : public IPinDevice {
   //  then "smart text" (cloud model, no repo) if the 3rd route is
   //  enabled and wired, else everything falls to the local model.
   Route _classify(const String& p) const {
-    if (_needsEscalation(p))
+    const bool hard = _needsEscalation(p);
+    // Coding / agent task: prefer the Pi orchestrator, which owns Claude
+    // Code (real filesystem + tools).  Only escalate if a Pi is actually
+    // configured — with ROUTER_PI_HOST empty we never open an outbound
+    // TLS socket, which would otherwise block this single-threaded
+    // server while connect() to an unreachable host times out.
+    if (hard && strlen(PI_HOST) > 0)
       return ESCALATED;
 #if ROUTER_DIRECT_API
-    if (_directApi && _isSmartText(p))
+    // No Pi (or a non-coding "smart text" turn): hand off to the Claude
+    // API directly when a NetDevice_ClaudeAPI is wired.  A hard task
+    // with no Pi still goes to the Claude *model* (text answer, no repo)
+    // rather than dead-ending at the tiny local LLM.
+    if (_directApi && (hard || _isSmartText(p)))
       return DIRECT_API;
 #endif
     return LOCAL;
