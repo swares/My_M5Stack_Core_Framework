@@ -349,7 +349,7 @@
          //             MQTT_CA_CERT, true = skip check
 // plain: broker IP/hostname.  MQTTS: the broker hostname (should
 // match its cert when MQTT_TLS_INSECURE is false).
-[[maybe_unused]] constexpr char MQTT_HOST[] = "192.168.1.229";
+[[maybe_unused]] constexpr char MQTT_HOST[] = "";
 // plain MQTT 1883; MQTTS 8883
 [[maybe_unused]] constexpr unsigned MQTT_PORT = 1883;
 // empty = anonymous / cert-only
@@ -534,7 +534,7 @@ PASTE THIS DEVICE'S PRIVATE KEY (xxxx-private.pem.key) HERE
 //  Leave ROUTER_PI_HOST empty ("") to keep the plugin compiled in
 //  but inert — every turn is then answered locally and nothing is
 //  ever escalated.
-[[maybe_unused]] constexpr char     ROUTER_PI_HOST[] = "pi1.local";
+[[maybe_unused]] constexpr char     ROUTER_PI_HOST[] = "";  // set to your Pi orchestrator (e.g. "pi1.local") to enable escalation
 [[maybe_unused]] constexpr unsigned ROUTER_PI_PORT = 443;
 [[maybe_unused]] constexpr char     ROUTER_PI_PATH[] = "/delegate";
 // Bearer token the orchestrator checks (""=no Authorization header).
