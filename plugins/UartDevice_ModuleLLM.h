@@ -73,6 +73,17 @@ class UartDevice_ModuleLLM : public IUartDevice {
   // which splits a StackFlow message and drops a token.  4 KB
   // absorbs the bursts.  Applied by IUartDevice before begin().
   static constexpr size_t RX_BUFFER = 4096;
+  // On a COLD power-up the AX630C boots its own Linux from scratch
+  // (tens of seconds) — much slower than a warm ESP32 reboot.  If the
+  // host probes Port-C before the module's LLM service has finished
+  // starting, checkConnection() succeeds (the UART answers) but
+  // setup() returns the bare type "llm" because the service isn't
+  // ready yet.  So try setup more than once, settling a few seconds
+  // between attempts and re-running sys.reset() each time, to give the
+  // module time to come up.  MODEL_SETUP_TRIES total attempts;
+  // MODEL_SETTLE_MS is the wait before each attempt's setup().
+  static constexpr uint8_t  MODEL_SETUP_TRIES = 3;
+  static constexpr uint32_t MODEL_SETTLE_MS   = 4000;
 
   const char* name() const override { return "Module LLM"; }
   const char* slug() const override { return "llm"; }
@@ -96,87 +107,97 @@ class UartDevice_ModuleLLM : public IUartDevice {
       Serial.println(F("[LLM] no response from Module LLM on Port-C"));
       return false;
     }
-    // ── Clear stale StackFlow units on the module ───────────────
-    //  The Module LLM (AX630C) runs its own OS and keeps running
-    //  when the host ESP32 resets.  Every llm.setup() allocates a
-    //  unit instance and loads the model into the AX630C's limited
-    //  RAM; those units are NOT freed by an ESP32 reboot.  After a
-    //  few host reboots the module's memory fills up and setup()
-    //  starts failing — it returns the unit *type* ("llm") instead
-    //  of an allocated instance id ("llm.1003"), and every later
-    //  inference is rejected with error -4 "inference data push
-    //  false" because no such unit exists.  sys.reset() restarts
-    //  the module's StackFlow service and frees every unit, so a
-    //  fresh setup() always has room.  This is exactly what the
-    //  official M5Module-LLM examples do before llm.setup().
-    Serial.println(F("[LLM] resetting module StackFlow service ..."));
-    int rr = _llm.sys.reset();  // blocks until reset finishes
-    if (rr != MODULE_LLM_OK)
-      Serial.printf("[LLM] sys.reset() returned %d (continuing anyway)\n", rr);
+    // ── Clear stale StackFlow units + load the model, with retries ──
+    //  Each attempt: sys.reset() (frees leaked units AND nudges the
+    //  service), settle, then setup().  Retrying rescues the common
+    //  cold-boot case where the module's LLM service simply wasn't
+    //  ready on the first try (see MODEL_SETUP_TRIES above).
+    for (uint8_t attempt = 1; attempt <= MODEL_SETUP_TRIES; attempt++) {
+      Serial.printf("[LLM] resetting module StackFlow service (attempt %u/%u) ...\n",
+                    attempt, static_cast<unsigned>(MODEL_SETUP_TRIES));
+      int rr = _llm.sys.reset();  // blocks until reset finishes
+      if (rr != MODULE_LLM_OK)
+        Serial.printf("[LLM] sys.reset() returned %d (continuing anyway)\n", rr);
 
-    // Load the model.  This BLOCKS for a few seconds while the
-    // AX630C loads weights — acceptable as a one-off at boot.
-    Serial.println(F("[LLM] loading language model (takes a few seconds) ..."));
-    m5_module_llm::ApiLlmSetupConfig_t cfg;
-    cfg.max_token_len = MAX_TOKENS;
-    if (SYSTEM_PROMPT[0] != '\0')
-      cfg.prompt = SYSTEM_PROMPT;
-    // model / response_format ("llm.utf-8.stream") / input are left
-    // at the library defaults: streaming UTF-8 text in and out.
-    _workId = _llm.llm.setup(cfg, "llm_setup");
-    // A successful setup returns an allocated instance id such as
-    // "llm.1003" — a numeric ".NNNN" suffix.  A bare "llm" means
-    // setup() got no success response.  That is EITHER a hard error
-    // (model missing / won't load) OR simply that the model load
-    // outran the library's internal setup() timeout.  Watch the
-    // module either way: dump every message it sends (so the real
-    // cause is on the console, not guessed) and, if a late setup
-    // success arrives, adopt its allocated work_id.
-    if (!_workIdValid()) {
-      Serial.printf(
-          "[LLM] setup() returned work_id='%s' (not an "
-          "allocated instance) — watching the module up to "
-          "20 s for the cause / a late response ...\n",
-          _workId.c_str());
-      uint32_t t0 = millis();
-      bool hardError = false;
-      while (millis() - t0 < 20000 && !_workIdValid() && !hardError) {
+      // Give the module's LLM service time to come up before setup,
+      // longer on a cold boot.  Pump update() so any boot messages
+      // are drained rather than backing up the RX buffer.
+      uint32_t s0 = millis();
+      while (millis() - s0 < MODEL_SETTLE_MS) {
         _llm.update();
-        for (auto& m : _llm.msg.responseMsgList) {
-          Serial.printf("[LLM] setup-rx[work_id=%s]: %s\n", m.work_id.c_str(),
-                        m.raw_msg.c_str());
-          JsonDocument d;
-          if (deserializeJson(d, m.raw_msg))
-            continue;
-          int ec = d["error"]["code"] | -99;
-          if (m.work_id.startsWith("llm.") && ec == 0) {
-            _workId = m.work_id;  // late setup success
-            Serial.printf("[LLM] adopted late setup work_id=%s\n",
-                          _workId.c_str());
-          } else if (ec != 0 && ec != -99) {
-            Serial.printf(
-                "[LLM] module reported setup error code=%d "
-                "— stopping the watch\n",
-                ec);
-            hardError = true;
-          }
-        }
         _llm.msg.responseMsgList.clear();
         delay(50);
       }
+
+      // Load the model.  This BLOCKS for a few seconds while the
+      // AX630C loads weights.
+      Serial.println(F("[LLM] loading language model (takes a few seconds) ..."));
+      m5_module_llm::ApiLlmSetupConfig_t cfg;
+      cfg.max_token_len = MAX_TOKENS;
+      if (SYSTEM_PROMPT[0] != '\0')
+        cfg.prompt = SYSTEM_PROMPT;
+      // model / response_format ("llm.utf-8.stream") / input are left
+      // at the library defaults: streaming UTF-8 text in and out.
+      _workId = _llm.llm.setup(cfg, "llm_setup");
+      // A successful setup returns an allocated instance id such as
+      // "llm.1003" — a numeric ".NNNN" suffix.  A bare "llm" means
+      // setup() got no success response.  That is EITHER a hard error
+      // (model missing / won't load) OR simply that the model load
+      // outran the library's internal setup() timeout.  Watch the
+      // module either way: dump every message it sends (so the real
+      // cause is on the console, not guessed) and, if a late setup
+      // success arrives, adopt its allocated work_id.
+      if (!_workIdValid()) {
+        Serial.printf(
+            "[LLM] setup() returned work_id='%s' (not an "
+            "allocated instance) — watching the module up to "
+            "20 s for the cause / a late response ...\n",
+            _workId.c_str());
+        uint32_t t0 = millis();
+        bool hardError = false;
+        while (millis() - t0 < 20000 && !_workIdValid() && !hardError) {
+          _llm.update();
+          for (auto& m : _llm.msg.responseMsgList) {
+            Serial.printf("[LLM] setup-rx[work_id=%s]: %s\n", m.work_id.c_str(),
+                          m.raw_msg.c_str());
+            JsonDocument d;
+            if (deserializeJson(d, m.raw_msg))
+              continue;
+            int ec = d["error"]["code"] | -99;
+            if (m.work_id.startsWith("llm.") && ec == 0) {
+              _workId = m.work_id;  // late setup success
+              Serial.printf("[LLM] adopted late setup work_id=%s\n",
+                            _workId.c_str());
+            } else if (ec != 0 && ec != -99) {
+              Serial.printf(
+                  "[LLM] module reported setup error code=%d "
+                  "— stopping the watch\n",
+                  ec);
+              hardError = true;
+            }
+          }
+          _llm.msg.responseMsgList.clear();
+          delay(50);
+        }
+      }
+
+      if (_workIdValid()) {
+        Serial.printf("[LLM] ready — work_id=%s\n", _workId.c_str());
+        _connected = true;
+        return true;
+      }
+      Serial.printf("[LLM] setup attempt %u/%u failed (work_id='%s')\n",
+                    attempt, static_cast<unsigned>(MODEL_SETUP_TRIES),
+                    _workId.c_str());
     }
-    if (!_workIdValid()) {
-      Serial.printf(
-          "[LLM] model setup FAILED — final work_id='%s'. "
-          "The module returned no allocated LLM instance; "
-          "see the [LLM] setup-rx line(s) above for the "
-          "module's own error message.\n",
-          _workId.c_str());
-      return false;
-    }
-    Serial.printf("[LLM] ready — work_id=%s\n", _workId.c_str());
-    _connected = true;
-    return true;
+
+    Serial.println(F(
+        "[LLM] model setup FAILED after all retries. The module returned "
+        "no allocated LLM instance; see the [LLM] setup-rx line(s) above "
+        "for the module's own error message. On a cold boot the AX630C may "
+        "still be starting — raise MODEL_SETUP_TRIES / MODEL_SETTLE_MS, or "
+        "GET /api/rescan once the module has finished booting."));
+    return false;
   }
 
   // Pump the module's UART every loop so streamed reply tokens are
