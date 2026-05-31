@@ -48,6 +48,7 @@
 // ============================================================
 #include "../src/IPinDevice.h"
 #include "../src/Config.h"     // CLAUDE_* settings
+#include "../src/Settings.h"   // runtime Claude API key (approach B)
 #include <WiFiClientSecure.h>
 #include <ArduinoJson.h>
 
@@ -56,8 +57,9 @@ class NetDevice_ClaudeAPI : public IPinDevice {
   NetDevice_ClaudeAPI() {}
 
   // ── Tunables (defined in Config.h — edit them there) ──────
-  //  ⚠ CLAUDE_API_KEY is stored in flash — scope it tightly.
-  static constexpr const char* API_KEY = CLAUDE_API_KEY;
+  //  ⚠ The API key is a runtime value now (Settings tab / setup
+  //  portal → NVS, falling back to CLAUDE_API_KEY in Secrets.h).
+  static String apiKey() { return Settings::claudeKey(); }
   static constexpr const char* MODEL   = CLAUDE_MODEL;
   static constexpr const char* SYSTEM_PROMPT = CLAUDE_SYSTEM_PROMPT;
   static constexpr int      MAX_TOKENS    = CLAUDE_MAX_TOKENS;
@@ -82,9 +84,11 @@ class NetDevice_ClaudeAPI : public IPinDevice {
     // call _client.setCACert(...) here instead.
     _client.setInsecure();
     _client.setTimeout(10000);
-    if (!API_KEY || String(API_KEY).length() == 0 ||
-        String(API_KEY).startsWith("sk-ant-REPLACE"))
-      Serial.println(F("[Claude] ⚠ CLAUDE_API_KEY not set — queries will 401"));
+    {
+      String k = apiKey();
+      if (k.length() == 0 || k.startsWith("sk-ant-REPLACE"))
+        Serial.println(F("[Claude] ⚠ Claude API key not set — queries will 401"));
+    }
     Serial.printf("[Claude] ready — POST https://%s%s (%s)\n", HOST, PATH, MODEL);
     return true;
   }
@@ -202,7 +206,7 @@ class NetDevice_ClaudeAPI : public IPinDevice {
 
     _client.printf("POST %s HTTP/1.1\r\n", PATH);
     _client.printf("Host: %s\r\n", HOST);
-    _client.printf("x-api-key: %s\r\n", API_KEY);
+    _client.printf("x-api-key: %s\r\n", apiKey().c_str());
     _client.printf("anthropic-version: %s\r\n", API_VERSION);
     _client.print(F("Content-Type: application/json\r\n"));
     _client.print(F("Accept: text/event-stream\r\n"));
