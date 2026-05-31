@@ -98,6 +98,14 @@ log. NTP is skipped in this mode (no upstream internet), so timestamps
 fall back to uptime, exactly as on a failed sync. `/api/config` reports
 `"wifi_mode": "ap"` vs `"station"`.
 
+> **No recompile needed.** Standalone-AP mode can also be turned on at
+> runtime: both the first-boot setup portal and the dashboard's Settings
+> page have a **"Run as a standalone access point (no Wi-Fi network)"**
+> checkbox. Check it, save, and the device reboots serving the dashboard
+> at `192.168.4.1` with no router — the choice is stored in NVS (an
+> `ap_only` flag). A factory reset clears it. See the provisioning section
+> below.
+
 ### 4 – Upload
 Open `M5Stack_I2C_Framework.ino` and click **Upload**.
 
@@ -1691,6 +1699,147 @@ M5Stack_I2C_Framework/
     SD log.  Both retry transient TLS-alloc failures and use an
     inactivity (not total-duration) reply timeout.  Settings live in
     the new `CLAUDE_*` / `ROUTER_*` blocks in `Config.h`.
+58. **Config hygiene — secrets split + default-credential guard**
+    (security approach A).  Every real credential (WiFi, AP password,
+    dashboard login, MQTT user/pass + client cert/key, router bearer,
+    Claude API key) moved out of `Config.h` into a new git-ignored
+    `src/Secrets.h`; `Config.h` `#include`s it last and a tracked
+    `src/Secrets.h.example` template carries placeholders.  A new
+    `_securityAudit()` runs at boot: when the dashboard login is still
+    the shipped `user` / `password`, it warns on the LCD + serial and,
+    with `SECURITY_STRICT` (default on, `Config.h`), refuses to boot.
+    When the AP password is left at the shipped default (or too short),
+    `Security::effectiveApPassword()` mints a random per-device WPA2
+    password, persists it in NVS, and shows it on a new `showNotice()`
+    LCD banner.  `.gitignore` now excludes `Secrets.h`.  This stops the
+    easy leaks (secrets in git, guessable defaults); it does not encrypt
+    secrets at rest — see approaches B–D for that.
+59. **Runtime provisioning — first-boot setup portal** (security
+    approach B, core).  New `src/Settings.{h,cpp}` is an NVS-backed
+    credential store with a HYBRID fallback: the effective value is
+    the NVS entry if set, otherwise the compiled `Secrets.h` default.
+    `Framework` loads it (`Settings::begin()`) before WiFi/auth, and
+    `_connectWiFi()` + the dashboard auth now read these runtime
+    values.  An unprovisioned unit (no WiFi in NVS or `Secrets.h`)
+    comes up as its own access point and serves a self-contained
+    **setup portal** at `/` (no auth — there's no password yet);
+    submitting WiFi + an optional dashboard login to `GET /api/setup`
+    saves them to NVS, marks the device provisioned, and reboots to
+    join the network.  Once provisioned, `/` is the dashboard and
+    `/api/setup` is auth-gated.  The approach-A boot guard now defers
+    to the portal while unprovisioned instead of halting.  `/api/config`
+    gained a `provisioned` flag and reports the effective SSID.  MQTT /
+    Claude / router secrets still read `Secrets.h` (moving those into
+    the portal + an editable Settings tab is full-B, not yet done).
+60. **Provisioning recovery — no more lock-outs** (hardening of 58/59).
+    Two escape hatches so a bad credential entered through the portal
+    can never strand the device: (a) `Settings::factoryReset()` +
+    `hasStoredCredentials()`, and `_securityAudit()` now, when a
+    *portal-provisioned* unit carries the guessable `user` / `password`
+    default under `SECURITY_STRICT`, wipes its provisioning and reboots
+    into the setup portal instead of dead-halting (it still halts only
+    when the default is compiled into `Secrets.h`); (b) a provisioned
+    unit that **fails to join its Wi-Fi** now falls back to the AP and
+    serves the setup portal (`Framework::forceSetupPortal()` →
+    `WebAPI::_setupMode()`) so the network can be re-entered without
+    erasing flash — covering a wrong password, a 5 GHz-only SSID
+    (the ESP32-S3 is 2.4 GHz only), or an out-of-range/offline router.
+61. **Hold-at-boot factory reset** — a hardware escape hatch
+    (`Framework::_checkFactoryResetHold()`).  Hold the touch screen
+    (CoreS3 / Core2) or any of BtnA/B/C (Core1 / Core2) for ~1.2 s
+    while the device powers on to wipe the NVS settings and reboot
+    into the setup portal — a guaranteed recovery even if the network
+    and both passwords are wrong, without erasing flash from a PC.
+    A brief tap is ignored; the hold must be sustained.  Gated by
+    `FACTORY_RESET_HOLD_DISABLED` (Config.h, default `false` = the
+    hold is enabled); set it `true` to disable the front-panel wipe on
+    a deployed/kiosk unit.  Touch detection polls a short window
+    (`FACTORY_RESET_WINDOW_MS`) after a warm-up that ignores the
+    CoreS3 controller's boot-time phantom contacts, and debounces a
+    real press.
+62. **Setup portal hardened to POST** — the first-boot provisioning
+    form now submits to `/api/setup` via `POST` with a url-encoded
+    body instead of a query string, so the Wi-Fi / dashboard password
+    never lands in the HTTPS server's request-line serial log.  The
+    device decodes the fields itself (`_urlDecode` / `_formField`) so
+    any password character round-trips exactly, with query- and
+    named-arg fallbacks, and `onNotFound` also routes `/api/setup` in
+    case the server registered the path for GET only.
+63. **Approach B completed — runtime MQTT/Claude creds, captive
+    portal, Settings page.**  The runtime `Settings` store now also
+    covers MQTT user/password and the Claude API key (hybrid fallback
+    to `Secrets.h`); `MQTTOut` and `NetDevice_ClaudeAPI` read them at
+    runtime.  The first-boot portal gained optional MQTT/Claude fields.
+    In setup mode the device runs a **captive portal**: a `DNSServer`
+    resolves every host to the AP IP and the plain-HTTP (port 80)
+    server serves the portal directly, so a phone auto-opens setup on
+    connect (no cert warning while provisioning).  A new auth-gated
+    **Settings page** at `/settings` (linked from the dashboard) edits
+    Wi-Fi / dashboard / MQTT / Claude credentials over HTTPS without
+    reflashing: `GET /api/settings` returns only non-secret state plus
+    set/unset badges (secrets are never sent to the browser),
+    `POST /api/settings/save` merges (blank = keep) and reboots.  The
+    setup-submit handler is shared between the HTTPS and captive-HTTP
+    servers via a server-generic template.
+64. **MQTT broker host/port runtime-configurable** — `mqttHost` /
+    `mqttPort` joined the `Settings` store (NVS, fallback to the
+    `Config.h` values), and the portal + Settings page gained host/port
+    fields, so a broker can be pointed at and enabled entirely from the
+    UI without reflashing.  `MQTTOut` reads them at boot (the host is
+    held in a member because `PubSubClient::setServer()` stores the
+    pointer, not a copy).  Transport (plain vs TLS) remains the
+    compile-time `MQTT_TLS` switch — the port field is labelled
+    accordingly (1883 plain / 8883 TLS).
+65. **Factory reset always returns to the setup portal.**  A wipe now
+    sets a persistent `force_setup` flag so the next boot shows the
+    captive portal even when `Secrets.h` bakes in a WiFi SSID (which
+    `isProvisioned()` otherwise treats as configured); `_connectWiFi()`
+    goes to the AP whenever the device is unprovisioned, so a
+    compiled/leftover SSID can't silently auto-join and skip the
+    portal.  `markProvisioned()` clears the flag once new secrets are
+    entered.  The hold-to-reset confirm now tolerates brief touch
+    dropouts (cancels only after ~350 ms of continuous release) so a
+    steady finger-hold reliably completes the wipe.  The reset window
+    is skipped on an already-unprovisioned device, so a finger still
+    held (or a boot-time phantom touch) right after a wipe can't loop
+    the reset — the device proceeds straight to the setup portal.
+66. **Captive portal DNS on WiFiUDP (sockets layer).**  Both the
+    bundled `DNSServer` and `AsyncUDP` call raw `udp_new` without the
+    TCP/IP core lock — a fatal assert ("Required to lock TCPIP core
+    functionality") on this ESP-IDF build that crash-looped at boot.
+    The responder now uses `WiFiUDP` (the lwIP SOCKETS layer —
+    `socket`/`bind`/`recvfrom`), which is thread-safe.
+    `_serviceCaptiveDns()` is polled from `update()`, answers every A
+    query with the AP IP (echo question + one answer, EDNS dropped),
+    and replies via `WiFiUDP`.  Gated by `CAPTIVE_DNS_ENABLED`
+    (Config.h, default true); set false to skip the auto-open (portal
+    still reachable at the AP IP, e.g. http://192.168.4.1/).
+67. **`WiFiUDP` forward-declaration build fix.**  `WebAPI.h` forward-
+    declared `class WiFiUDP;`, but on the current esp32 core (3.3.x)
+    `WiFiUDP` is a `typedef` for `NetworkUDP`, not a class — so the
+    declaration broke the build with *"using typedef-name 'WiFiUDP'
+    after 'class'"*.  Since `<WiFi.h>` is already included in the header,
+    the type is in scope and the forward declaration was simply removed.
+68. **Settings save POST routing fix.**  The dashboard Settings page
+    submits `POST /api/settings/save`, but the server's `on()`
+    registration only matches `GET`, so the save fell through to
+    `onNotFound`, was mistaken for a plugin slug, and returned
+    *"plugin not found: settings/save"*.  `onNotFound` now catches
+    `/api/settings/save` (and `/api/settings`) explicitly before the
+    plugin lookup — the same workaround already used for `/api/setup`.
+69. **Standalone-AP dashboard mode is now runtime-selectable.**  A new
+    persisted `ap_only` flag in `Settings` (NVS) lets the device run as
+    its own access point serving the **dashboard** — not the setup
+    portal — at `192.168.4.1`, with no upstream Wi-Fi.  Both the
+    first-boot portal and the Settings page gained a "standalone access
+    point" checkbox (when checked the Wi-Fi fields hide and become
+    optional); the submit clears any stored SSID and sets `ap_only`.
+    `isProvisioned()` treats `ap_only` as provisioned (so `/` serves the
+    dashboard), while `_connectWiFi()` takes the access-point path
+    whenever `ap_only` is set, regardless of any compiled `WIFI_SSID`.
+    `/api/config` and `/api/settings` report `ap_only`, and `/api/all`
+    now returns the softAP IP when in AP mode.  A factory reset clears
+    the flag, returning the device to the normal first-boot portal.
 
 ---
 
