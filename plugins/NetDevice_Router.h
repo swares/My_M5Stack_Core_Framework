@@ -112,6 +112,9 @@ class NetDevice_Router : public IPinDevice {
   void fastPoll() override {
     if (!_busy)
       return;
+#if ROUTER_LLM_TIEBREAK
+    if (_route == CLASSIFYING) { _pumpClassify(); return; }
+#endif
     if (_route == LOCAL)
       _pumpLocal();
     else if (_route == DIRECT_API)
@@ -135,7 +138,8 @@ class NetDevice_Router : public IPinDevice {
     o["timed_out"]   = _timedOut ? 1 : 0;
     o["route_taken"] = _route == LOCAL ? "local"
                        : _route == DIRECT_API ? "direct_api"
-                       : _route == ESCALATED ? "escalated" : "";
+                       : _route == ESCALATED ? "escalated"
+                       : _route == CLASSIFYING ? "classifying" : "";
     o["prompt"]      = _prompt;
     o["answer"]      = _answer;
     o["escalations"] = _escalations;
@@ -162,7 +166,17 @@ class NetDevice_Router : public IPinDevice {
       _answer = "";
       _done = false;
       _timedOut = false;
-      switch (_classify(value)) {
+      Route r = _classify(value);
+#if ROUTER_LLM_TIEBREAK
+      // The prefilter only escalates on an explicit signal, so its
+      // "LOCAL" verdict really means "nothing matched" — the ambiguous
+      // middle.  When a local model is present and there's somewhere to
+      // escalate to, let the model adjudicate yes/no before defaulting
+      // to it.  Decisive ESCALATED / DIRECT_API verdicts skip this.
+      if (r == LOCAL && _localLlm && _hasEscalationTarget())
+        return _startClassify(value);
+#endif
+      switch (r) {
         case ESCALATED:  return _startEscalated(value);
         case DIRECT_API: return _startDirect(value);
         default:         return _startLocal(value);
@@ -189,7 +203,7 @@ class NetDevice_Router : public IPinDevice {
   }
 
  private:
-  enum Route : uint8_t { NONE, LOCAL, DIRECT_API, ESCALATED };
+  enum Route : uint8_t { NONE, LOCAL, DIRECT_API, ESCALATED, CLASSIFYING };
 
   IDevice*          _localLlm;
   IDevice*          _directApi;
@@ -283,6 +297,81 @@ class NetDevice_Router : public IPinDevice {
         return true;
     return false;
   }
+
+  // True when escalation has somewhere to go (a Pi, or the direct API).
+  bool _hasEscalationTarget() const {
+    if (strlen(PI_HOST) > 0)
+      return true;
+#if ROUTER_DIRECT_API
+    if (_directApi)
+      return true;
+#endif
+    return false;
+  }
+
+#if ROUTER_LLM_TIEBREAK
+  // ── LLM tiebreaker: does this ambiguous turn need escalation? ──
+  //  Reached only for turns the keyword/extension prefilter did NOT
+  //  flag (see command("ask")), and only when a local model exists and
+  //  there's a target to escalate to.  Runs ONE short yes/no classify
+  //  inference on the local model asynchronously (route = CLASSIFYING);
+  //  _pumpClassify() reads the verdict and dispatches the real turn.
+
+  // Kick off the classification turn.  The user's prompt is already in
+  // _prompt; we ask the model a wrapped yes/no question and mirror its
+  // reply in _pumpClassify().
+  bool _startClassify(const String& prompt) {
+    String q = String(ROUTER_TIEBREAK_PROMPT) + "\n\nRequest: " + prompt;
+    if (!_localLlm->command("ask", q)) {
+      // Local model busy/unavailable — skip the tiebreaker and answer
+      // locally on a best-effort basis (its own fallback handles the
+      // unavailable case).
+      return _startLocal(prompt);
+    }
+    _route = CLASSIFYING;
+    _busy = true;
+    _lastRxMs = millis();
+    Serial.println(F("[Router] tiebreaker — asking local model to classify"));
+    return true;
+  }
+
+  // Watch the classification turn.  While the local model is still
+  // thinking, keep the router's idle timer fresh.  Once it finishes,
+  // read the one-word verdict, clear the model's scratch, and dispatch
+  // the REAL turn: "yes" → escalate (Pi, else direct API), else local.
+  void _pumpClassify() {
+    JsonDocument d;
+    JsonObject o = d.to<JsonObject>();
+    _localLlm->toJson(o);
+    const bool done = (o["done"] | 0) || (o["timed_out"] | 0);
+    const bool busy = (o["busy"] | 0);
+    if (!done && busy) {
+      _lastRxMs = millis();   // classification still streaming — stay alive
+      return;
+    }
+    String raw = o["answer"] | "";
+#if ROUTER_TIEBREAK_TRACE
+    // Dump the model's exact reply so the classification prompt can be
+    // tuned — invaluable while picking ROUTER_TIEBREAK_PROMPT wording.
+    Serial.printf("[Router] tiebreaker raw reply: \"%s\"\n", raw.c_str());
+#endif
+    String verdict = raw;
+    verdict.toLowerCase();
+    const bool escalate = verdict.indexOf("yes") >= 0 ||
+                          verdict.indexOf("escalate") >= 0 ||
+                          verdict.indexOf("code") >= 0;
+    _localLlm->command("clear", "");   // wipe scratch before the real turn
+    Serial.printf("[Router] tiebreaker verdict: %s\n",
+                  escalate ? "ESCALATE" : "local");
+    if (escalate) {
+      if (strlen(PI_HOST) > 0) { _startEscalated(_prompt); return; }
+#if ROUTER_DIRECT_API
+      if (_directApi) { _startDirect(_prompt); return; }
+#endif
+    }
+    _startLocal(_prompt);
+  }
+#endif  // ROUTER_LLM_TIEBREAK
 
   // ── Local path: delegate to the Module LLM, mirror its answer ──
   bool _startLocal(const String& prompt) {
