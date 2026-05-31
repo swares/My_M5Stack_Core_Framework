@@ -1,0 +1,306 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Device Settings — by Category &amp; Capability</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#faf9f5; --bg-1:#f3eee2; --bg-2:#ebe4d2; --bg-3:#e2dac4;
+    --line:#d8cfb6; --line-2:#c2b89e;
+    --ink:#2a2a2a; --ink-2:#5e6573; --ink-3:#8a857b; --ink-4:#b8b1a0;
+    --accent:#6ba8ff; --accent-soft:#d4dcef; --accent-2:#3b7ddd;
+    --ok:#4ade9c; --warn:#ffba3c; --err:#ff6c5e; --magenta:#d390e0; --cyan:#6ad4e8;
+    --bg-code:#0d1117; --ink-code:#d8dee9; --shadow:rgba(60,50,30,.07);
+    --nvs-bg:#dff0d6; --nvs-fg:#2f6b2a;
+    --cfg-bg:#dde8fb; --cfg-fg:#1f5bb5;
+    --sec-bg:#faecd2; --sec-fg:#8a5a0b;
+    --ino-bg:#fbe0dc; --ino-fg:#b8331e;
+    --ro-bg:#e2dac4; --ro-fg:#6e6a60;
+    --mono:'JetBrains Mono',ui-monospace,Menlo,Consolas,monospace;
+    --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--bg);color:var(--ink);font-family:var(--sans);line-height:1.5;padding:32px 20px}
+  .wrap{max-width:1080px;margin:0 auto}
+  h1{font-size:24px;font-weight:700;letter-spacing:-.01em;margin-bottom:5px}
+  .sub{font-size:13.5px;color:var(--dim);margin-bottom:16px;max-width:780px}
+  .sub b{color:var(--ink);font-weight:600}
+  .legend{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:18px}
+  .chip{font-size:11px;font-weight:600;padding:2px 9px;border-radius:20px;white-space:nowrap}
+  .nvs{background:var(--nvs-bg);color:var(--nvs-fg)} .cfg{background:var(--cfg-bg);color:var(--cfg-fg)}
+  .sec{background:var(--sec-bg);color:var(--sec-fg)} .ino{background:var(--ino-bg);color:var(--ino-fg)}
+  .ro{background:var(--ro-bg);color:var(--ro-fg)}
+  .hinttext{font-size:12px;color:var(--dim);margin-left:auto}
+  .hinttext b{color:var(--ink);font-weight:600}
+  table{width:100%;border-collapse:separate;border-spacing:0;font-size:12.5px;border:1px solid var(--border);border-radius:12px;overflow:hidden;margin-bottom:10px;background:var(--surface)}
+  thead th{background:var(--surface2);text-align:left;font-size:10.5px;letter-spacing:.04em;color:var(--dim);padding:10px 12px;border-bottom:1px solid var(--border);font-weight:700;text-transform:uppercase}
+  tbody td{padding:10px 12px;border-bottom:1px solid var(--border);vertical-align:middle}
+  tbody tr:last-child td{border-bottom:none}
+  tbody tr:hover{background:var(--surface2)}
+  .cat{font-weight:700;font-size:13px;white-space:nowrap}
+  .dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:7px;vertical-align:middle}
+  .d1{background:#1f6feb}.d2{background:#0f8a6a}.d3{background:#b5760f}.d4{background:#6b4fd8}.d5{background:#4a8a14}.d6{background:#c0392b}
+  .opt{font-size:11.5px;padding:4px 11px;border-radius:7px;border:1px solid var(--border2);background:var(--surface);color:var(--dim);margin:2px 4px 2px 0;cursor:pointer;font-family:inherit;transition:background .12s,border-color .12s,color .12s}
+  .opt:hover{background:var(--accent-soft);border-color:var(--accent);color:var(--accent)}
+  .opt.cap,.opt.tier{border-radius:20px}
+  .opt.mut{border-style:dashed;font-style:italic}
+  .opt.sel{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:600}
+  .soon{font-size:9.5px;text-transform:uppercase;letter-spacing:.04em;opacity:.7;margin-left:4px}
+  code{font-family:var(--mono);font-size:11px;background:var(--code-bg);color:var(--code-fg);padding:1.5px 6px;border-radius:5px}
+  .subh{font-size:16px;font-weight:700;margin:22px 0 9px;display:flex;align-items:center}
+  .panel{margin-top:16px;border:1px solid var(--border2);border-radius:12px;background:var(--surface);padding:16px 18px;min-height:96px;box-shadow:0 1px 3px rgba(0,0,0,.04)}
+  .panel.empty{border-style:dashed;box-shadow:none;background:var(--surface2);display:flex;flex-direction:column;justify-content:center}
+  .ph{font-size:13px;color:var(--dim);font-weight:600}
+  .pe{font-size:12px;color:var(--faint);margin-top:4px}
+  .pt{font-size:15px;font-weight:700;margin-bottom:4px}
+  .pd{font-size:12.5px;color:var(--dim);margin-bottom:14px}
+  .fileblk{margin-bottom:12px}
+  .fileh{margin-bottom:6px}
+  .fileblk ul{margin:0;padding:0;list-style:none}
+  .fileblk li{display:flex;gap:10px;align-items:baseline;padding:4px 0 4px 12px;border-left:2px solid var(--border)}
+  .vd{font-size:12px;color:var(--dim)}
+  .foot{font-size:11px;color:var(--faint);margin-top:16px;line-height:1.7}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Device settings — by category &amp; capability</h1>
+  <p class="sub">Each category resolves to one <b>Mode</b> (mutually exclusive), independent <b>Options</b>, read-only <b>Status</b> the device reports, and a <b>Source</b> (which file the setting lives in). Click any mode or option to see the exact files and variables to change.</p>
+
+  <div class="legend">
+    <span class="chip nvs">NVS · live-editable</span>
+    <span class="chip cfg">Config.h · reflash</span>
+    <span class="chip sec">Secrets.h · reflash</span>
+    <span class="chip ino">.ino · reflash</span>
+    <span class="chip ro">device-reported</span>
+    <span class="hinttext">Click a <b>mode</b> or <b>option</b> → panel below names files &amp; variables.</span>
+  </div>
+
+  <table>
+    <thead><tr><th>Category</th><th>Mode (pick one)</th><th>Options</th><th>Status (read-only)</th><th>Source</th></tr></thead>
+    <tbody>
+      <tr>
+        <td class="cat"><span class="dot d1"></span>Network</td>
+        <td>
+          <button class="opt mode" data-k="net.station">Station (join SSID)</button>
+          <button class="opt mode" data-k="net.ap">Standalone AP</button>
+          <button class="opt mode mut" data-k="net.portal">Setup/recovery portal</button>
+        </td>
+        <td><button class="opt cap" data-k="net.apssid">AP SSID / pass</button></td>
+        <td><code>wifi_mode</code> · IP · <code>ap_only</code></td>
+        <td><span class="chip nvs">NVS</span><span class="chip sec">Sec</span></td>
+      </tr>
+      <tr>
+        <td class="cat"><span class="dot d2"></span>Dashboard &amp; API</td>
+        <td>
+          <button class="opt mode" data-k="web.https">HTTPS + redirect</button>
+          <button class="opt mode mut" data-k="web.httpap">Plain-HTTP AP <span class="soon">planned</span></button>
+        </td>
+        <td>
+          <button class="opt cap" data-k="web.auth">Basic Auth</button>
+          <button class="opt cap" data-k="web.ports">Ports</button>
+        </td>
+        <td>auth user · ports</td>
+        <td><span class="chip sec">Sec</span><span class="chip cfg">Cfg</span></td>
+      </tr>
+      <tr>
+        <td class="cat"><span class="dot d3"></span>MQTT telemetry</td>
+        <td>
+          <button class="opt mode" data-k="mqtt.off">Off</button>
+          <button class="opt mode" data-k="mqtt.plain">Plain (TCP)</button>
+          <button class="opt mode" data-k="mqtt.tls">TLS (user/pass)</button>
+          <button class="opt mode" data-k="mqtt.mutual">Mutual TLS (AWS IoT)</button>
+          <button class="opt mode" data-k="mqtt.insecure">TLS-insecure</button>
+        </td>
+        <td>
+          <button class="opt cap" data-k="mqtt.ha">HA discovery</button>
+          <button class="opt cap" data-k="mqtt.retain">Retain / LWT</button>
+          <button class="opt cap" data-k="mqtt.topic">Host / topic</button>
+        </td>
+        <td>connected · <code>transport</code> · <code>tls_verified</code></td>
+        <td><span class="chip nvs">NVS</span><span class="chip cfg">Cfg</span><span class="chip sec">Sec</span></td>
+      </tr>
+      <tr>
+        <td class="cat"><span class="dot d5"></span>Local outputs</td>
+        <td>
+          <button class="opt mode mut" data-k="disp.off">Display off</button>
+          <button class="opt mode" data-k="disp.scroll">Scroll ticker</button>
+          <button class="opt mode" data-k="disp.grid">Fixed grid</button>
+        </td>
+        <td>
+          <button class="opt cap" data-k="out.serial">Serial</button>
+          <button class="opt cap" data-k="out.sd">SD log</button>
+        </td>
+        <td>SD mounted · log file</td>
+        <td><span class="chip cfg">Cfg</span></td>
+      </tr>
+      <tr>
+        <td class="cat"><span class="dot d6"></span>Security &amp; recovery</td>
+        <td>
+          <button class="opt mode" data-k="sec.strict">Strict (halt)</button>
+          <button class="opt mode" data-k="sec.warn">Warn-only</button>
+        </td>
+        <td>
+          <button class="opt cap" data-k="sec.reset">Factory-reset hold</button>
+          <button class="opt cap" data-k="sec.appw">Random AP pass</button>
+        </td>
+        <td>default-cred warnings</td>
+        <td><span class="chip cfg">Cfg</span><span class="chip sec">Sec</span></td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h3 class="subh"><span class="dot d4"></span>AI assistant (router) — tier ladder &amp; classifier</h3>
+  <table>
+    <thead><tr><th>Layer</th><th>Choice</th><th>Status</th><th>Source</th></tr></thead>
+    <tbody>
+      <tr>
+        <td class="cat">Tiers enabled</td>
+        <td>
+          <button class="opt tier" data-k="ai.local">Local LLM</button>
+          <button class="opt tier" data-k="ai.api">Direct Claude API</button>
+          <button class="opt tier" data-k="ai.pi">Pi orchestrator</button>
+        </td>
+        <td><code>route_taken</code></td>
+        <td><span class="chip ino">.ino</span><span class="chip cfg">Cfg</span><span class="chip sec">Sec</span></td>
+      </tr>
+      <tr>
+        <td class="cat">Classifier</td>
+        <td>
+          <button class="opt tier" data-k="ai.kw">Keyword prefilter</button>
+          <button class="opt tier" data-k="ai.tie">LLM tiebreaker</button>
+          <button class="opt cap" data-k="ai.trace">Tiebreak trace</button>
+        </td>
+        <td>serial log</td>
+        <td><span class="chip cfg">Cfg</span></td>
+      </tr>
+      <tr>
+        <td class="cat">Fallback</td>
+        <td><button class="opt cap" data-k="ai.fallback">Escalate if local down</button></td>
+        <td>—</td>
+        <td><span class="chip cfg">Cfg</span></td>
+      </tr>
+    </tbody>
+  </table>
+
+  <div id="panel" class="panel empty">
+    <div class="ph">Select a mode or option above</div>
+    <p class="pe">The files and variables you'd edit will appear here, grouped by file.</p>
+  </div>
+
+  <p class="foot">Convention: filled = active selection · outline = available alternative · dashed = transient/automatic. Source badges tell you whether a setting is live-editable (NVS, via the portal/Settings page) or needs a rebuild (Config.h / Secrets.h / the .ino). Sub-settings depend on their parent mode (e.g. Mutual TLS only when TLS is on).</p>
+</div>
+
+<script>
+const D = {
+ "net.station":{t:"Network → Station mode",d:"Device joins an existing Wi-Fi network as a client.",c:[
+   ["Secrets.h",[["WIFI_SSID","set to your network name"],["WIFI_PASSWORD","set to its password"]]],
+   ["NVS (runtime)",[["wifi ssid / pass","or set from the setup portal — no reflash"],["ap_only","must be false"]]]]},
+ "net.ap":{t:"Network → Standalone AP",d:"Device runs its own Wi-Fi and serves the dashboard at 192.168.4.1.",c:[
+   ["NVS (runtime)",[["ap_only","set true via the portal/Settings standalone-AP checkbox"]]],
+   ["Secrets.h",[["AP_PASSWORD","8–63 chars, or leave default for a random per-device one"]]],
+   ["Config.h",[["AP_SSID","the network name the device broadcasts"]]]]},
+ "net.portal":{t:"Network → Setup / recovery portal",d:"Transient: shown when unprovisioned or after a failed join. Not a user-set mode.",c:[
+   ["(automatic)",[["—","entered when isProvisioned() is false or Wi-Fi join fails; exits once credentials are saved"]]]]},
+ "net.apssid":{t:"Network → AP identity",d:"SSID/password of the device's own access point (AP and recovery modes).",c:[
+   ["Config.h",[["AP_SSID","broadcast network name"]]],
+   ["Secrets.h",[["AP_PASSWORD","WPA2 key, 8–63 chars"]]]]},
+
+ "web.https":{t:"Dashboard → HTTPS + redirect",d:"Current behavior: TLS dashboard, with port-80 → HTTPS redirect.",c:[
+   ["Config.h",[["WEB_HTTPS_PORT","default 443"],["WEB_HTTP_REDIRECT_PORT","default 80"]]],
+   ["(cert)",[["https_cert.h","embedded self-signed cert/key"]]]]},
+ "web.httpap":{t:"Dashboard → Plain-HTTP AP (planned)",d:"Not built yet — would serve the dashboard over plain HTTP in standalone-AP mode (link already WPA2-encrypted).",c:[
+   ["(future)",[["—","discussed as a follow-up; no variable yet"]]]]},
+ "web.auth":{t:"Dashboard → Basic Auth",d:"HTTP Basic Auth in front of every route. Empty user = auth disabled.",c:[
+   ["Secrets.h",[["WEB_AUTH_USER","empty string disables auth"],["WEB_AUTH_PASS","dashboard password"]]],
+   ["NVS (runtime)",[["web user / pass","editable from the Settings page — no reflash"]]]]},
+ "web.ports":{t:"Dashboard → Ports",d:"TLS and redirect listener ports.",c:[
+   ["Config.h",[["WEB_HTTPS_PORT","TLS port"],["WEB_HTTP_REDIRECT_PORT","redirect port"]]]]},
+
+ "mqtt.off":{t:"MQTT → Off",d:"Compiled out entirely, or compiled in but inert.",c:[
+   ["Config.h",[["OUT_MQTT","false drops PubSubClient + all MQTT code"],["MQTT_HOST","empty string = compiled in but inert"]]]]},
+ "mqtt.plain":{t:"MQTT → Plain (TCP)",d:"Unencrypted MQTT, typical for Mosquitto / Home Assistant on a trusted LAN.",c:[
+   ["Config.h",[["MQTT_TLS","false"],["MQTT_PORT","1883"],["MQTT_HOST","broker IP/hostname"]]],
+   ["Secrets.h",[["MQTT_USER / MQTT_PASS","optional broker login"]]],
+   ["NVS (runtime)",[["mqtt host/port/user/pass","editable from the portal/Settings"]]]]},
+ "mqtt.tls":{t:"MQTT → TLS (user/pass)",d:"Encrypted MQTTS, device authenticates with username/password inside the tunnel.",c:[
+   ["Config.h",[["MQTT_TLS","true"],["MQTT_TLS_MUTUAL","false"],["MQTT_TLS_INSECURE","false"],["MQTT_PORT","8883"],["MQTT_CA_CERT","broker CA / root cert"]]],
+   ["Secrets.h",[["MQTT_USER / MQTT_PASS","broker credentials"]]]]},
+ "mqtt.mutual":{t:"MQTT → Mutual TLS (AWS IoT)",d:"Device proves identity with an X.509 client certificate; no username/password.",c:[
+   ["Config.h",[["MQTT_TLS","true"],["MQTT_TLS_MUTUAL","true"],["MQTT_PORT","8883"],["MQTT_HOST","AWS data endpoint"],["MQTT_CLIENT_ID","the Thing name"]]],
+   ["Secrets.h",[["MQTT_CLIENT_CERT","device certificate"],["MQTT_CLIENT_KEY","device private key"]]]]},
+ "mqtt.insecure":{t:"MQTT → TLS-insecure",d:"Encrypt-only: TLS without verifying the broker. Trusted LANs / self-signed brokers only.",c:[
+   ["Config.h",[["MQTT_TLS","true"],["MQTT_TLS_INSECURE","true — skips MQTT_CA_CERT check"],["MQTT_PORT","8883"]]]]},
+ "mqtt.ha":{t:"MQTT → Home Assistant discovery",d:"Publishes one HA discovery config per sensor so entities auto-appear.",c:[
+   ["Config.h",[["MQTT_HA_DISCOVERY","true"],["MQTT_HA_PREFIX","must match HA discovery_prefix (default homeassistant)"],["MQTT_DEVICE_NAME","shown in HA"]]]]},
+ "mqtt.retain":{t:"MQTT → Retain / LWT",d:"Retained per-plugin docs + Last-Will status topic.",c:[
+   ["Config.h",[["MQTT_RETAIN","retain published docs"],["MQTT_KEEPALIVE","LWT keepalive secs"],["MQTT_PUBLISH_MS","publish interval"]]]]},
+ "mqtt.topic":{t:"MQTT → Host / topic",d:"Broker address and base topic the device publishes under.",c:[
+   ["Config.h",[["MQTT_HOST","broker"],["MQTT_PORT","port"],["MQTT_BASE_TOPIC","topic prefix, default m5stack"],["MQTT_CLIENT_ID","client id"]]],
+   ["NVS (runtime)",[["mqtt host / port","editable from the portal/Settings"]]]]},
+
+ "disp.off":{t:"Display → Off",d:"LCD output compiled out.",c:[["Config.h",[["OUT_DISPLAY","false"]]]]},
+ "disp.scroll":{t:"Display → Scroll ticker",d:"Single scrolling line cycling through plugins.",c:[
+   ["Config.h",[["OUT_DISPLAY","true"],["DISPLAY_SCROLL","true"],["DISPLAY_CYCLE_MS","ms per panel"],["DISPLAY_SCROLL_PX","scroll speed"]]]]},
+ "disp.grid":{t:"Display → Fixed grid",d:"Static multi-value grid instead of a ticker.",c:[
+   ["Config.h",[["OUT_DISPLAY","true"],["DISPLAY_SCROLL","false"],["DISPLAY_CYCLE_MS","ms per page"]]]]},
+ "out.serial":{t:"Outputs → Serial",d:"Periodic per-plugin readings dump to the Serial Monitor (boot log is always on).",c:[
+   ["Config.h",[["OUT_SERIAL","true / false"]]]]},
+ "out.sd":{t:"Outputs → SD log",d:"One CSV per boot with a header built from active plugins.",c:[
+   ["Config.h",[["OUT_SD_LOG","true / false"]]]]},
+
+ "sec.strict":{t:"Security → Strict",d:"Halt at boot if a default credential is detected.",c:[
+   ["Config.h",[["SECURITY_STRICT","true"]]]]},
+ "sec.warn":{t:"Security → Warn-only",d:"Boot anyway, print a one-time warning. Convenient on the bench.",c:[
+   ["Config.h",[["SECURITY_STRICT","false"]]]]},
+ "sec.reset":{t:"Security → Factory-reset hold",d:"Hold touch/button at boot to wipe NVS and return to the setup portal.",c:[
+   ["Config.h",[["FACTORY_RESET_HOLD_DISABLED","false = enabled"],["FACTORY_RESET_WINDOW_MS","press window"]]]]},
+ "sec.appw":{t:"Security → Random AP password",d:"If AP_PASSWORD is the shipped default / too short, a random per-device one is minted and shown at boot.",c:[
+   ["Secrets.h",[["AP_PASSWORD","set a real value to use your own instead of the random one"]]]]},
+
+ "ai.local":{t:"AI → Local LLM tier",d:"On-board Module LLM answers trivial turns over UART.",c:[
+   ["M5Stack_I2C_Framework.ino",[["new UartDevice_ModuleLLM(Serial2)","register it, pass as router arg 1"]]],
+   ["plugins/UartDevice_ModuleLLM.h",[["SYSTEM_PROMPT / MAX_TOKENS","model tunables"]]]]},
+ "ai.api":{t:"AI → Direct Claude API tier",d:"Smart-text turns go straight to the Anthropic API (model, not agent).",c:[
+   ["Config.h",[["ROUTER_DIRECT_API","true"],["CLAUDE_MODEL / CLAUDE_MAX_TOKENS","API params"]]],
+   ["Secrets.h",[["CLAUDE_API_KEY","⚠ billable key lands in flash"]]],
+   ["M5Stack_I2C_Framework.ino",[["new NetDevice_ClaudeAPI()","register, pass as router arg 2"]]]]},
+ "ai.pi":{t:"AI → Pi orchestrator tier",d:"Hard / coding turns escalate to Claude Code on your Pi over HTTPS.",c:[
+   ["Config.h",[["ROUTER_PI_HOST","set to enable escalation"],["ROUTER_PI_PORT / ROUTER_PI_PATH","endpoint"],["ROUTER_TLS_INSECURE","self-signed LAN cert"]]],
+   ["Secrets.h",[["ROUTER_BEARER","optional auth token"]]]]},
+ "ai.kw":{t:"AI → Keyword prefilter",d:"Always-on, instant. Escalates on keyword / path / file-extension match.",c:[
+   ["Config.h",[["ROUTER_ESCALATE_KEYWORDS","coding-task words"],["ROUTER_DIRECT_KEYWORDS","smart-text words"],["ROUTER_DIRECT_MIN_WORDS","length fallback"]]]]},
+ "ai.tie":{t:"AI → LLM tiebreaker",d:"For prompts the prefilter didn't flag, the local model votes yes/no on escalation.",c:[
+   ["Config.h",[["ROUTER_LLM_TIEBREAK","true"],["ROUTER_TIEBREAK_PROMPT","classification instruction"]]],
+   ["(requires)",[["local LLM + an escalation target","else it's skipped"]]]]},
+ "ai.trace":{t:"AI → Tiebreak trace",d:"Logs the model's raw classification reply for prompt tuning.",c:[
+   ["Config.h",[["ROUTER_TIEBREAK_TRACE","true (needs ROUTER_LLM_TIEBREAK)"]]]]},
+ "ai.fallback":{t:"AI → Escalate if local down",d:"When the local model is missing/busy, send the turn to the Pi instead of erroring.",c:[
+   ["Config.h",[["ROUTER_FALLBACK_ESCALATE","true (needs ROUTER_PI_HOST set)"]]]]}
+};
+const panel=document.getElementById('panel');
+const SRC={"Secrets.h":"sec","Config.h":"cfg","NVS (runtime)":"nvs","M5Stack_I2C_Framework.ino":"ino","plugins/UartDevice_ModuleLLM.h":"ino"};
+function esc(s){return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+function render(k){
+  const e=D[k]; if(!e) return;
+  let h='<div class="pt">'+esc(e.t)+'</div><p class="pd">'+esc(e.d)+'</p>';
+  e.c.forEach(function(grp){
+    const cls=SRC[grp[0]]||'ro';
+    h+='<div class="fileblk"><div class="fileh"><span class="chip '+cls+'">'+esc(grp[0])+'</span></div><ul>';
+    grp[1].forEach(function(v){ h+='<li><code>'+esc(v[0])+'</code><span class="vd">'+esc(v[1])+'</span></li>'; });
+    h+='</ul></div>';
+  });
+  panel.className='panel'; panel.innerHTML=h;
+}
+document.querySelectorAll('.opt').forEach(function(b){
+  b.addEventListener('click',function(){
+    document.querySelectorAll('.opt.sel').forEach(function(x){x.classList.remove('sel');});
+    b.classList.add('sel'); render(b.getAttribute('data-k'));
+  });
+});
+</script>
+</body>
+</html>

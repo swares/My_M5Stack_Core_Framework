@@ -1039,6 +1039,97 @@ M5Stack_I2C_Framework/
 
 ---
 
+## Settings reference — by category &amp; capability
+
+Every configurable area resolves to one **Mode** (a mutually-exclusive choice),
+a set of independent **Options**, read-only **Status** the device reports, and a
+**Source** — the file the setting lives in, which also tells you whether it is
+live-editable or needs a rebuild:
+
+| Source | Meaning |
+|---|---|
+| **NVS** | Runtime, stored in flash NVS — editable from the setup portal / Settings page, **no reflash** |
+| **Config.h** | Compile-time — edit and **reflash** |
+| **Secrets.h** | Compile-time secret (git-ignored) — edit and **reflash** |
+| **.ino** | Plugin registration in the sketch — edit and **reflash** |
+| **reported** | Read-only, surfaced by the device (`/api/config`, `/api/all`) |
+
+> An interactive version of this table (click a mode to see the exact variables)
+> lives in `Settings_Taxonomy.html` and in the bundled `index.html` docs.
+
+### Categories
+
+| Category | Mode (pick one) | Options | Status (read-only) | Source |
+|---|---|---|---|---|
+| **Network** | Station (join SSID) · Standalone AP · _Setup/recovery portal_ | AP SSID / pass | `wifi_mode`, IP, `ap_only` | NVS · Secrets |
+| **Dashboard &amp; API** | HTTPS + redirect · _Plain-HTTP AP (planned)_ | Basic Auth · Ports | auth user, ports | Secrets · Config |
+| **MQTT telemetry** | Off · Plain (TCP) · TLS (user/pass) · Mutual TLS (AWS IoT) · TLS-insecure | HA discovery · Retain/LWT · Host/topic | connected, `transport`, `tls_verified` | NVS · Config · Secrets |
+| **Local outputs** | _Display off_ · Scroll ticker · Fixed grid | Serial · SD log | SD mounted, log file | Config |
+| **Security &amp; recovery** | Strict (halt) · Warn-only | Factory-reset hold · Random AP pass | default-cred warnings | Config · Secrets |
+
+### AI assistant (router) — tier ladder &amp; classifier
+
+The router is not a single mode but a **ladder of tiers** the classifier picks
+between per turn, plus the classifier itself:
+
+| Layer | Choice | Status | Source |
+|---|---|---|---|
+| **Tiers enabled** | Local LLM · Direct Claude API · Pi orchestrator | `route_taken` | .ino · Config · Secrets |
+| **Classifier** | Keyword prefilter · LLM tiebreaker · Tiebreak trace | serial log | Config |
+| **Fallback** | Escalate if local down | — | Config |
+
+### Variables by selection
+
+For each mode/option, the files and variables to change:
+
+**Network**
+
+- _Station (join SSID)_ — `Secrets.h`: `WIFI_SSID`, `WIFI_PASSWORD`; or set Wi-Fi from the setup portal at runtime (NVS), with `ap_only` = false.
+- _Standalone AP_ — NVS: `ap_only` = true (the portal/Settings "standalone AP" checkbox); `Config.h`: `AP_SSID`; `Secrets.h`: `AP_PASSWORD` (8–63 chars, or leave default for a random per-device one).
+- _Setup/recovery portal_ — automatic; entered when `isProvisioned()` is false or a Wi-Fi join fails, exits once credentials are saved.
+- _AP identity_ — `Config.h`: `AP_SSID`; `Secrets.h`: `AP_PASSWORD`.
+
+**Dashboard &amp; API**
+
+- _HTTPS + redirect_ — `Config.h`: `WEB_HTTPS_PORT` (443), `WEB_HTTP_REDIRECT_PORT` (80); cert in `https_cert.h`.
+- _Plain-HTTP AP_ — planned, no variable yet.
+- _Basic Auth_ — `Secrets.h`: `WEB_AUTH_USER` (empty disables auth), `WEB_AUTH_PASS`; or edit the web login at runtime from the Settings page (NVS).
+
+**MQTT telemetry**
+
+- _Off_ — `Config.h`: `OUT_MQTT` = false (drops PubSubClient + all MQTT code), or `MQTT_HOST` = "" (compiled in but inert).
+- _Plain (TCP)_ — `Config.h`: `MQTT_TLS` = false, `MQTT_PORT` = 1883, `MQTT_HOST`; `Secrets.h`: `MQTT_USER` / `MQTT_PASS` (optional); host/port/user/pass also runtime-editable (NVS).
+- _TLS (user/pass)_ — `Config.h`: `MQTT_TLS` = true, `MQTT_TLS_MUTUAL` = false, `MQTT_TLS_INSECURE` = false, `MQTT_PORT` = 8883, `MQTT_CA_CERT`; `Secrets.h`: `MQTT_USER` / `MQTT_PASS`.
+- _Mutual TLS (AWS IoT)_ — `Config.h`: `MQTT_TLS` = true, `MQTT_TLS_MUTUAL` = true, `MQTT_PORT` = 8883, `MQTT_HOST` (AWS data endpoint), `MQTT_CLIENT_ID` (Thing name); `Secrets.h`: `MQTT_CLIENT_CERT`, `MQTT_CLIENT_KEY`.
+- _TLS-insecure_ — `Config.h`: `MQTT_TLS` = true, `MQTT_TLS_INSECURE` = true (skips `MQTT_CA_CERT` check), `MQTT_PORT` = 8883.
+- _HA discovery_ — `Config.h`: `MQTT_HA_DISCOVERY` = true, `MQTT_HA_PREFIX`, `MQTT_DEVICE_NAME`.
+- _Retain / LWT_ — `Config.h`: `MQTT_RETAIN`, `MQTT_KEEPALIVE`, `MQTT_PUBLISH_MS`.
+- _Host / topic_ — `Config.h`: `MQTT_HOST`, `MQTT_PORT`, `MQTT_BASE_TOPIC`, `MQTT_CLIENT_ID`; host/port runtime-editable (NVS).
+
+**Local outputs**
+
+- _Display off / Scroll / Grid_ — `Config.h`: `OUT_DISPLAY`, `DISPLAY_SCROLL` (true = scroll, false = grid), `DISPLAY_CYCLE_MS`, `DISPLAY_SCROLL_PX`.
+- _Serial_ — `Config.h`: `OUT_SERIAL` (boot log is always on regardless).
+- _SD log_ — `Config.h`: `OUT_SD_LOG`.
+
+**Security &amp; recovery**
+
+- _Strict / Warn-only_ — `Config.h`: `SECURITY_STRICT` (true = halt on default creds, false = warn).
+- _Factory-reset hold_ — `Config.h`: `FACTORY_RESET_HOLD_DISABLED` (false = enabled), `FACTORY_RESET_WINDOW_MS`.
+- _Random AP pass_ — `Secrets.h`: `AP_PASSWORD` (set a real value to override the auto-minted random one).
+
+**AI assistant (router)**
+
+- _Local LLM tier_ — `M5Stack_I2C_Framework.ino`: register `new UartDevice_ModuleLLM(Serial2)` and pass it as the router's 1st arg; tunables `SYSTEM_PROMPT` / `MAX_TOKENS` in `plugins/UartDevice_ModuleLLM.h`.
+- _Direct Claude API tier_ — `Config.h`: `ROUTER_DIRECT_API` = true, `CLAUDE_MODEL`, `CLAUDE_MAX_TOKENS`; `Secrets.h`: `CLAUDE_API_KEY` (⚠ billable key in flash); `.ino`: register `new NetDevice_ClaudeAPI()` as the router's 2nd arg.
+- _Pi orchestrator tier_ — `Config.h`: `ROUTER_PI_HOST` (set to enable), `ROUTER_PI_PORT`, `ROUTER_PI_PATH`, `ROUTER_TLS_INSECURE`; `Secrets.h`: `ROUTER_BEARER` (optional).
+- _Keyword prefilter_ — `Config.h`: `ROUTER_ESCALATE_KEYWORDS`, `ROUTER_DIRECT_KEYWORDS`, `ROUTER_DIRECT_MIN_WORDS`.
+- _LLM tiebreaker_ — `Config.h`: `ROUTER_LLM_TIEBREAK` = true, `ROUTER_TIEBREAK_PROMPT` (requires a local LLM and an escalation target, else skipped).
+- _Tiebreak trace_ — `Config.h`: `ROUTER_TIEBREAK_TRACE` = true (needs `ROUTER_LLM_TIEBREAK`).
+- _Escalate if local down_ — `Config.h`: `ROUTER_FALLBACK_ESCALATE` = true (needs `ROUTER_PI_HOST` set).
+
+---
+
 ## What changed from the CoreS3-only version
 
 1. **New `BoardInfo` module** detects the host board via `M5.getBoard()`
@@ -1840,6 +1931,24 @@ M5Stack_I2C_Framework/
     `/api/config` and `/api/settings` report `ap_only`, and `/api/all`
     now returns the softAP IP when in AP mode.  A factory reset clears
     the flag, returning the device to the normal first-boot portal.
+70. **Router LLM yes/no tiebreaker (optional classifier).**  The
+    escalation router (`NetDevice_Router`) previously decided local-vs-
+    escalate purely from the keyword/path/extension prefilter, which
+    only escalates on an EXPLICIT signal — a genuinely hard request
+    worded without a trigger word silently stayed on the tiny local
+    model.  A new `ROUTER_LLM_TIEBREAK` switch (Config.h, default
+    `false`) adds a model-judged decision for the ambiguous middle:
+    turns the prefilter did NOT flag first run ONE short yes/no
+    classification inference on the on-board Module LLM, and only a
+    "yes" escalates (to the Pi, else the direct API).  Decisive
+    prefilter hits skip the tiebreaker entirely (no added latency on the
+    obvious cases); it is also skipped when no local model is wired or
+    there's nowhere to escalate to.  Implemented as a new asynchronous
+    `CLASSIFYING` route that reuses the existing decoupled
+    `command("ask")`/`toJson()` mirroring — no new transport code, and
+    the keyword path remains the instant, offline-safe fallback.  The
+    classification prompt is tunable via `ROUTER_TIEBREAK_PROMPT`, and
+    `route_taken` reports `"classifying"` while the verdict is pending.
 
 ---
 
