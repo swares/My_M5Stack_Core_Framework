@@ -5,6 +5,7 @@
 #if OUT_MQTT
 #include "MQTTOut.h"
 #include "Framework.h"
+#include "Settings.h"      // runtime MQTT user/pass (approach B)
 #include <ArduinoJson.h>
 #include <cstdio>          // snprintf
 
@@ -20,11 +21,16 @@ void MQTTOut::begin(Framework* fw) {
     Serial.println(F("[MQTT] disabled (OUT_MQTT=false)"));
     return;
   }
-  if (strlen(MQTT_HOST) == 0) {
-    Serial.println(F("[MQTT] disabled (MQTT_HOST empty)"));
+  // Effective broker host/port: NVS override (Settings page / portal)
+  // first, else the compiled Secrets/Config values.  Kept in _host so
+  // the pointer PubSubClient::setServer() stores stays valid.
+  _host = Settings::mqttHost();
+  if (_host.isEmpty()) {
+    Serial.println(F("[MQTT] disabled (no broker host set)"));
     enabled = false;
     return;
   }
+  uint16_t mqttPort = Settings::mqttPort();
 
 #if MQTT_TLS
   // ── MQTTS / TLS transport ───────────────────────────────────
@@ -52,7 +58,7 @@ void MQTTOut::begin(Framework* fw) {
   Serial.println(F("[MQTT] transport: plain TCP (unencrypted)"));
 #endif
 
-  _client.setServer(MQTT_HOST, MQTT_PORT);
+  _client.setServer(_host.c_str(), mqttPort);
   _client.setKeepAlive(MQTT_KEEPALIVE);
   // Default PubSubClient buffer is 256 bytes.  Sensor publishes
   // fit in ~300 bytes, but HA discovery config messages with the
@@ -62,7 +68,7 @@ void MQTTOut::begin(Framework* fw) {
   _client.setBufferSize(1024);
 
   Serial.printf("[MQTT] target %s:%u base='%s' clientId='%s'\n",
-                MQTT_HOST, MQTT_PORT, MQTT_BASE_TOPIC, MQTT_CLIENT_ID);
+                _host.c_str(), mqttPort, MQTT_BASE_TOPIC, MQTT_CLIENT_ID);
   _tryConnect();
 }
 
@@ -113,13 +119,17 @@ void MQTTOut::update() {
 //  to the same topic, so subscribers always see the latest state.
 void MQTTOut::_tryConnect() {
   _stats.connectAttempts++;
-  Serial.printf("[MQTT] connecting to %s:%u ...", MQTT_HOST, MQTT_PORT);
+  Serial.printf("[MQTT] connecting to %s:%u ...", _host.c_str(), Settings::mqttPort());
 
   String willTopic = String(MQTT_BASE_TOPIC) + "/status";
+  // Effective broker credentials: NVS override (Settings tab / portal)
+  // first, else the compiled Secrets.h values.
+  String mqttUser = Settings::mqttUser();
+  String mqttPass = Settings::mqttPass();
   bool ok;
-  if (strlen(MQTT_USER) > 0) {
+  if (mqttUser.length() > 0) {
     ok = _client.connect(MQTT_CLIENT_ID,
-                         MQTT_USER, MQTT_PASS,
+                         mqttUser.c_str(), mqttPass.c_str(),
                          willTopic.c_str(), 0, true, "offline");
   } else {
     ok = _client.connect(MQTT_CLIENT_ID,

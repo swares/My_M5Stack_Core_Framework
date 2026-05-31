@@ -103,6 +103,11 @@ class MQTTOut {
 #endif
   PubSubClient _client{_net};
 
+  // Broker host kept as a member because PubSubClient::setServer()
+  // stores the POINTER we pass, not a copy — so the backing string
+  // must outlive begin().  Loaded once from Settings in begin().
+  String _host;
+
   uint32_t _lastPublish = 0;
   uint32_t _lastReconnect = 0;
   bool _everConnected = false;  // controls "[MQTT] connecting..." spam

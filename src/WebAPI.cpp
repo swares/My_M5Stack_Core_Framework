@@ -6,6 +6,9 @@
 #include "WebAPI.h"
 #include "Framework.h"
 #include "BoardInfo.h"
+#include "Settings.h"  // runtime WiFi + dashboard login (approach B)
+#include <WiFiUdp.h>   // captive-portal DNS responder (lwIP sockets — safe)
+#include <SD.h>        // sdcard_type_t enum (CARD_NONE/MMC/SD/SDHC) for /api SD status
 #include <esp_log.h>   // esp_log_level_set() — quiets the esp-tls log tag
 #include <cstdio>      // snprintf
 
@@ -248,6 +251,7 @@ footer{text-align:center;padding:20px;color:var(--dim);font-size:.72rem}
   <button class="ghost" onclick="window.open('/api/config')">&#9881; Config</button>
   <button class="ghost" onclick="window.open('/api/mqtt')">&#128231; MQTT</button>
   <button class="ghost" onclick="window.open('/api/sdcard')">&#128190; SD</button>
+  <button class="ghost" onclick="location.href='/settings'">&#128273; Settings</button>
   <button class="ghost" onclick="if(confirm('Re-run boot scan?'))doRescan()">&#8635; Rescan</button>
   <span id="ts"></span>
 </div>
@@ -690,6 +694,214 @@ setInterval(refresh,5000);
 )==";
 
 // ============================================================
+//  First-boot setup portal (approach B).  Served at "/" when the
+//  device is unprovisioned (no WiFi in NVS or Secrets.h).  Self-
+//  contained; submits the form to /api/setup as a GET (the request
+//  travels inside the TLS tunnel, and fetch keeps it out of browser
+//  history), which saves the values to NVS and reboots.
+// ============================================================
+static const char SETUP_HTML[] PROGMEM = R"==(
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Device Setup</title>
+<style>
+:root{color-scheme:dark}
+body{margin:0;background:#0d1b2a;color:#e8eef5;font:16px/1.5 system-ui,sans-serif;
+ display:flex;min-height:100vh;align-items:center;justify-content:center}
+.card{background:#16263a;max-width:420px;width:92%;padding:26px 24px;border-radius:14px;
+ box-shadow:0 10px 30px rgba(0,0,0,.4)}
+h1{margin:0 0 6px;font-size:20px}
+p.sub{margin:0 0 18px;color:#9fb2c8;font-size:14px}
+label{display:block;margin:12px 0 4px;font-size:13px;color:#b9c8da}
+input{width:100%;box-sizing:border-box;padding:10px 12px;
+ border:1px solid #2c4258;border-radius:8px;background:#0f1f31;color:#e8eef5;font-size:15px}
+hr{border:none;border-top:1px solid #243a52;margin:20px 0}
+button{margin-top:20px;width:100%;padding:12px;border:0;border-radius:8px;
+ background:#fd9720;color:#1a1207;font-size:16px;font-weight:600;cursor:pointer}
+button:disabled{opacity:.6;cursor:default}
+#msg{margin-top:14px;font-size:14px;min-height:20px}
+.hint{color:#7f93a8;font-size:12px;margin-top:2px}
+</style>
+</head>
+<body>
+<div class="card">
+<h1>Device setup</h1>
+<p class="sub">This unit isn&#39;t configured yet. Enter your Wi-Fi and a dashboard login. It saves them on the device and reboots to join your network.</p>
+<form id="f">
+<label style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+<input type="checkbox" name="aponly" value="1" id="ap" style="width:auto;margin:0">
+Run as a standalone access point (no Wi-Fi network)</label>
+<div class="hint">Check this to serve the dashboard on the device's own Wi-Fi at its AP address (192.168.4.1) without joining a router.</div>
+<div id="wifi">
+<label>Wi-Fi network (SSID)</label>
+<input name="ssid" autocomplete="off" required>
+<label>Wi-Fi password</label>
+<input name="wpass" type="password" autocomplete="off">
+</div>
+<hr>
+<label>Dashboard username</label>
+<input name="user" autocomplete="off" placeholder="blank = keep current">
+<div class="hint">Leave the login fields blank to keep the password already set on the device.</div>
+<label>Dashboard password</label>
+<input name="upass" type="password" autocomplete="off">
+<details style="margin-top:14px">
+<summary style="cursor:pointer;color:#9fb2c8">Advanced (optional) — MQTT &amp; Claude</summary>
+<div class="hint">Leave blank to skip. (TLS on/off is set in Config.h.)</div>
+<label>MQTT broker host</label>
+<input name="mqtthost" autocomplete="off" placeholder="e.g. 192.168.1.10 — blank = MQTT off">
+<label>MQTT port</label>
+<input name="mqttport" type="number" min="1" max="65535" placeholder="1883 plain / 8883 TLS">
+<label>MQTT username</label>
+<input name="mqttuser" autocomplete="off">
+<label>MQTT password</label>
+<input name="mqttpass" type="password" autocomplete="off">
+<label>Claude API key</label>
+<input name="claude" type="password" autocomplete="off">
+</details>
+<button id="b" type="submit">Save &amp; reboot</button>
+</form>
+<p id="msg"></p>
+</div>
+<script>
+var f=document.getElementById('f'),m=document.getElementById('msg'),b=document.getElementById('b');
+var ap=document.getElementById('ap'),wifi=document.getElementById('wifi');
+function syncAp(){
+ var on=ap.checked;
+ wifi.style.display=on?'none':'';
+ f.ssid.required=!on;            // don't block submit when AP-only
+}
+ap.addEventListener('change',syncAp);syncAp();
+f.addEventListener('submit',function(e){
+ e.preventDefault();
+ var body=new URLSearchParams(new FormData(f)).toString();
+ b.disabled=true;m.textContent='Saving...';
+ // POST (not GET) so the password is never written to the device's
+ // request-line log; the body is url-encoded and decoded on-device.
+ fetch('/api/setup',{method:'POST',
+   headers:{'Content-Type':'application/x-www-form-urlencoded'},
+   body:body}).then(function(r){return r.json();}).then(function(d){
+  if(d&&d.ok){m.textContent=d.msg||'Saved. Rebooting...';}
+  else{b.disabled=false;m.textContent='Error: '+((d&&d.error)||'unknown');}
+ }).catch(function(){m.textContent='Saved. The device is rebooting — reconnect to your Wi-Fi.';});
+});
+</script>
+</body>
+</html>
+)==";
+
+// ============================================================
+//  Settings page (approach B, full).  Auth-gated editor served at
+//  /settings on a provisioned device, so credentials can be changed
+//  over HTTPS without reflashing or factory-reset.  Non-secret values
+//  (SSID, usernames) are pre-filled from /api/settings; password and
+//  key fields are blank and "blank = keep current".  Secrets are
+//  never sent back to the browser — only set/unset badges.
+// ============================================================
+static const char SETTINGS_HTML[] PROGMEM = R"==(
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Settings</title>
+<style>
+:root{color-scheme:dark}
+body{margin:0;background:#0d1b2a;color:#e8eef5;font:16px/1.5 system-ui,sans-serif;
+ display:flex;min-height:100vh;align-items:center;justify-content:center}
+.card{background:#16263a;max-width:440px;width:92%;padding:26px 24px;border-radius:14px;
+ box-shadow:0 10px 30px rgba(0,0,0,.4)}
+h1{margin:0 0 6px;font-size:20px}
+p.sub{margin:0 0 16px;color:#9fb2c8;font-size:14px}
+label{display:block;margin:12px 0 4px;font-size:13px;color:#b9c8da}
+input{width:100%;box-sizing:border-box;padding:10px 12px;
+ border:1px solid #2c4258;border-radius:8px;background:#0f1f31;color:#e8eef5;font-size:15px}
+hr{border:none;border-top:1px solid #243a52;margin:18px 0}
+button{margin-top:20px;width:100%;padding:12px;border:0;border-radius:8px;
+ background:#fd9720;color:#1a1207;font-size:16px;font-weight:600;cursor:pointer}
+button:disabled{opacity:.6;cursor:default}
+#msg{margin-top:14px;font-size:14px;min-height:20px}
+.hint{color:#7f93a8;font-size:12px;margin-top:2px}
+.badge{font-size:11px;padding:2px 7px;border-radius:10px;margin-left:6px}
+.set{background:#1f8a5b;color:#fff}.unset{background:#553;color:#fdd}
+a.back{color:#9fb2c8;font-size:13px;text-decoration:none}
+</style>
+</head>
+<body>
+<div class="card">
+<h1>Settings</h1>
+<p class="sub">Change stored credentials. Leave a password/key blank to keep the current one. Saving reboots the device.</p>
+<form id="f">
+<label style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+<input type="checkbox" name="aponly" value="1" id="ap" style="width:auto;margin:0">
+Run as a standalone access point (no Wi-Fi network)</label>
+<div class="hint">Serves the dashboard on the device's own Wi-Fi at 192.168.4.1, with no router.</div>
+<div id="wifi">
+<label>Wi-Fi network (SSID)</label>
+<input name="ssid" autocomplete="off">
+<label>Wi-Fi password <span class="hint">(blank = keep)</span></label>
+<input name="wpass" type="password" autocomplete="off">
+</div>
+<hr>
+<label>Dashboard username</label>
+<input name="user" autocomplete="off">
+<label>Dashboard password <span class="hint">(blank = keep)</span></label>
+<input name="upass" type="password" autocomplete="off">
+<hr>
+<label>MQTT broker host <span class="hint">(blank = keep)</span></label>
+<input name="mqtthost" autocomplete="off">
+<label>MQTT port</label>
+<input name="mqttport" type="number" min="1" max="65535">
+<label>MQTT username <span id="mb" class="badge unset">unset</span></label>
+<input name="mqttuser" autocomplete="off">
+<label>MQTT password <span class="hint">(blank = keep)</span></label>
+<input name="mqttpass" type="password" autocomplete="off">
+<label>Claude API key <span id="cb" class="badge unset">unset</span> <span class="hint">(blank = keep)</span></label>
+<input name="claude" type="password" autocomplete="off">
+<button id="b" type="submit">Save &amp; reboot</button>
+</form>
+<p id="msg"></p>
+<p><a class="back" href="/">&larr; back to dashboard</a></p>
+</div>
+<script>
+var f=document.getElementById('f'),m=document.getElementById('msg'),b=document.getElementById('b');
+var ap=document.getElementById('ap'),wifi=document.getElementById('wifi');
+function syncAp(){wifi.style.display=ap.checked?'none':'';}
+ap.addEventListener('change',syncAp);
+fetch('/api/settings').then(function(r){return r.json();}).then(function(d){
+ ap.checked=!!d.ap_only;syncAp();
+ f.ssid.value=d.ap_only?'':(d.wifi_ssid||'');
+ f.user.value=d.web_user||'';
+ f.mqtthost.value=d.mqtt_host||'';
+ if(d.mqtt_port)f.mqttport.value=d.mqtt_port;
+ f.mqttuser.value=d.mqtt_user||'';
+ if(d.mqtt_set){var e=document.getElementById('mb');e.textContent='set';e.className='badge set';}
+ if(d.claude_set){var c=document.getElementById('cb');c.textContent='set';c.className='badge set';}
+}).catch(function(){});
+f.addEventListener('submit',function(e){
+ e.preventDefault();
+ var body=new URLSearchParams(new FormData(f)).toString();
+ b.disabled=true;m.textContent='Saving...';
+ fetch('/api/settings/save',{method:'POST',
+   headers:{'Content-Type':'application/x-www-form-urlencoded'},
+   body:body}).then(function(r){return r.json();}).then(function(d){
+  if(d&&d.ok){m.textContent=d.msg||'Saved. Rebooting...';}
+  else{b.disabled=false;m.textContent='Error: '+((d&&d.error)||'unknown');}
+ }).catch(function(){m.textContent='Saved. The device is rebooting...';});
+});
+</script>
+</body>
+</html>
+)==";
+
+// ============================================================
+
+// Forward declaration — the shared setup-submit handler is defined
+// with the other setup helpers further below; begin() references it
+// for the captive (plain-HTTP) server.
+template <class Srv> static void serveSetupSubmit(Srv* srv);
 
 void WebAPI::begin(Framework* fw) {
   _fw = fw;
@@ -723,8 +935,33 @@ void WebAPI::begin(Framework* fw) {
   // WEB_AUTH_USER is empty this is a no-op; otherwise the request
   // is rejected with 401 unless it carries valid HTTP Basic Auth.
   _srv->on("/",           [this](){
-    if (!_requireAuth()) return;
+    // In setup mode (unprovisioned, or recovery AP after a failed
+    // join) "/" serves the setup portal with NO auth — there may be
+    // no usable password to enter yet.  Otherwise it's the dashboard
+    // behind the usual auth.
+    if (!_setupMode() && !_requireAuth()) return;
     _route_root();
+  });
+  // Provisioning submit.  Open in setup mode; auth-gated otherwise so
+  // a normally-running unit can't be re-provisioned by anyone who can
+  // reach it.
+  _srv->on("/api/setup",  [this](){
+    if (!_setupMode() && !_requireAuth()) return;
+    _route_setup();
+  });
+  // Auth-gated credential editor (provisioned device, over HTTPS).
+  _srv->on("/settings", [this](){
+    if (!_requireAuth()) return;
+    _cors();
+    _srv->send_P(200, "text/html; charset=utf-8", SETTINGS_HTML);
+  });
+  _srv->on("/api/settings", [this](){
+    if (!_requireAuth()) return;
+    _route_settingsGet();
+  });
+  _srv->on("/api/settings/save", [this](){
+    if (!_requireAuth()) return;
+    _route_settingsSave();
   });
   _srv->on("/api/all",    [this](){
     if (!_requireAuth()) return;
@@ -789,8 +1026,29 @@ void WebAPI::begin(Framework* fw) {
     _json(doc);
   });
   _srv->onNotFound([this](){
-    if (!_requireAuth()) return;
     String uri = _reqPath();          // path only — query stripped
+    // Catch /api/setup here too, in case the server's on() only
+    // registered it for GET and the portal submits via POST.  Same
+    // gating as the dedicated route: open in setup mode, else auth.
+    if (uri == "/api/setup") {
+      if (!_setupMode() && !_requireAuth()) return;
+      _route_setup();
+      return;
+    }
+    if (!_requireAuth()) return;
+    // The settings editor submits the save via POST.  Like /api/setup,
+    // the on() registration above only matches GET, so the POST lands
+    // here — catch it explicitly before the /api/<slug> plugin lookup,
+    // otherwise "settings/save" is mistaken for a plugin slug and 404s
+    // with "plugin not found: settings/save".
+    if (uri == "/api/settings/save") {
+      _route_settingsSave();
+      return;
+    }
+    if (uri == "/api/settings") {
+      _route_settingsGet();
+      return;
+    }
     if (!uri.startsWith("/api/")) {
       _route_404();
       return;
@@ -806,16 +1064,59 @@ void WebAPI::begin(Framework* fw) {
   });
   _srv->begin();
 
-  // ── HTTP server (port 80) — redirect only ─────────────────
-  //  Serves no content; every request gets a 301 to the HTTPS URL
-  //  so an old http:// bookmark still lands on the secure page.
+  // ── HTTP server (port 80) ─────────────────────────────────
   _httpRedirect = new ESPWebServer(WEB_HTTP_REDIRECT_PORT);
-  _httpRedirect->onNotFound([this](){ _sendRedirect(); });
-  _httpRedirect->begin();
+  if (_setupMode()) {
+    // Captive-portal mode: serve the setup page (and accept the
+    // submit) over plain HTTP so a phone's captive-portal probe opens
+    // it automatically — and without a self-signed-cert warning.  The
+    // link is already WPA2-encrypted on our own AP.  Paired with the
+    // DNS hijack below, any URL the device requests lands here.
+    _httpRedirect->onNotFound([this]() {
+      // Handle the submit by path (covers POST even if on() is
+      // GET-only); serve the portal for every other request so the
+      // OS captive check opens it.
+      if (_httpRedirect->uri() == "/api/setup") {
+        serveSetupSubmit(_httpRedirect);
+        return;
+      }
+      _httpRedirect->send_P(200, "text/html; charset=utf-8", SETUP_HTML);
+    });
+    _httpRedirect->begin();
+#if CAPTIVE_DNS_ENABLED
+    // Point every hostname at us (resolve *.* → our AP IP) so the OS
+    // captive check is redirected to the portal.  WiFiUDP uses the lwIP
+    // SOCKETS layer (socket/bind/recvfrom) — thread-safe, unlike the
+    // raw udp_new path DNSServer / AsyncUDP take, which asserts here.
+    // Serviced (polled) in update().
+    _dnsUdp = new WiFiUDP();
+    if (_dnsUdp->begin(53)) {
+      Serial.printf("[WebAPI] Captive portal active — DNS → %s\n",
+                    WiFi.softAPIP().toString().c_str());
+    } else {
+      Serial.println(F("[WebAPI] Captive DNS failed to bind :53 — portal "
+                       "still at the AP IP."));
+      delete _dnsUdp;
+      _dnsUdp = nullptr;
+    }
+#else
+    Serial.printf("[WebAPI] Setup portal at http://%s/  (captive DNS off — "
+                  "browse there manually)\n",
+                  WiFi.softAPIP().toString().c_str());
+#endif
+  } else {
+    // Normal mode: serve no content; 301 every request to the HTTPS
+    // URL so an old http:// bookmark still lands on the secure page.
+    _httpRedirect->onNotFound([this]() { _sendRedirect(); });
+    _httpRedirect->begin();
+  }
 
-  if (strlen(WEB_AUTH_USER) > 0) {
+  if (_setupMode()) {
+    Serial.printf("[WebAPI] HTTPS server on port %d — SETUP MODE, "
+                  "serving setup portal at /\n", WEB_HTTPS_PORT);
+  } else if (Settings::webUser().length() > 0) {
     Serial.printf("[WebAPI] HTTPS server on port %d (auth: user=%s)\n",
-                  WEB_HTTPS_PORT, WEB_AUTH_USER);
+                  WEB_HTTPS_PORT, Settings::webUser().c_str());
   } else {
     Serial.printf("[WebAPI] HTTPS server on port %d (no auth)\n",
                   WEB_HTTPS_PORT);
@@ -826,8 +1127,58 @@ void WebAPI::begin(Framework* fw) {
 
 void WebAPI::update() {
   if (!enabled) return;
+  if (_dnsUdp)       _serviceCaptiveDns();         // captive-portal DNS
   if (_srv)          _srv->handleClient();
   if (_httpRedirect) _httpRedirect->handleClient();
+}
+
+// ── _serviceCaptiveDns ───────────────────────────────────────
+//  Answer one pending DNS query (if any) with an A record pointing at
+//  the AP IP, so every hostname resolves to us and the OS opens the
+//  setup portal.  Echoes the question, appends one answer, drops any
+//  additional/EDNS records.  WiFiUDP = lwIP sockets = thread-safe.
+void WebAPI::_serviceCaptiveDns() {
+  int avail = _dnsUdp->parsePacket();
+  if (avail <= 0) return;
+
+  uint8_t q[320];
+  int qlen = _dnsUdp->read(q, sizeof(q));
+  if (qlen < 12) return;                  // too short to be a DNS query
+
+  // Walk the first question's QNAME (length-prefixed labels, 0-term).
+  int pos = 12;
+  while (pos < qlen && q[pos] != 0) {
+    pos += q[pos] + 1;
+    if (pos >= qlen) return;              // malformed
+  }
+  pos += 1 + 4;                           // 0 terminator + QTYPE + QCLASS
+  if (pos > qlen) return;
+  const int qend = pos;                  // header + one question
+
+  uint8_t resp[320];
+  if (qend + 16 > (int)sizeof(resp)) return;
+  memcpy(resp, q, qend);                  // copy header + question verbatim
+  resp[2] = 0x81;                         // QR=1, AA=1
+  resp[3] = 0x80;                         // RA=1, RCODE=0
+  resp[4] = 0x00; resp[5] = 0x01;         // QDCOUNT = 1
+  resp[6] = 0x00; resp[7] = 0x01;         // ANCOUNT = 1
+  resp[8] = 0x00; resp[9] = 0x00;         // NSCOUNT = 0
+  resp[10] = 0x00; resp[11] = 0x00;       // ARCOUNT = 0 (drop EDNS OPT)
+
+  IPAddress apIP = WiFi.softAPIP();
+  int i = qend;
+  resp[i++] = 0xC0; resp[i++] = 0x0C;     // NAME → pointer to the question
+  resp[i++] = 0x00; resp[i++] = 0x01;     // TYPE  A
+  resp[i++] = 0x00; resp[i++] = 0x01;     // CLASS IN
+  resp[i++] = 0x00; resp[i++] = 0x00;
+  resp[i++] = 0x00; resp[i++] = 0x3C;     // TTL = 60 s
+  resp[i++] = 0x00; resp[i++] = 0x04;     // RDLENGTH = 4
+  resp[i++] = apIP[0]; resp[i++] = apIP[1];
+  resp[i++] = apIP[2]; resp[i++] = apIP[3];
+
+  _dnsUdp->beginPacket(_dnsUdp->remoteIP(), _dnsUdp->remotePort());
+  _dnsUdp->write(resp, i);
+  _dnsUdp->endPacket();
 }
 
 // ── _sendRedirect ─────────────────────────────────────────────
@@ -865,12 +1216,14 @@ String WebAPI::_reqPath() {
 
 // ── helpers ───────────────────────────────────────────────────
 bool WebAPI::_requireAuth() {
+  // Effective dashboard login: NVS override (set via the setup portal)
+  // first, else the compiled Secrets.h value.
+  String user = Settings::webUser();
   // Empty user disables authentication — every route serves freely.
-  if (strlen(WEB_AUTH_USER) == 0) return true;
+  if (user.isEmpty()) return true;
   // authenticate() returns true if the Authorization header matches.
-  // The credentials now travel inside the TLS tunnel, so they are
-  // encrypted on the wire (unlike the old plain-HTTP server).
-  if (_srv->authenticate(WEB_AUTH_USER, WEB_AUTH_PASS)) return true;
+  // The credentials travel inside the TLS tunnel, encrypted on the wire.
+  if (_srv->authenticate(user.c_str(), Settings::webPass().c_str())) return true;
   // Send 401 + WWW-Authenticate so the browser prompts.
   _srv->requestAuthentication();
   return false;
@@ -944,13 +1297,233 @@ void WebAPI::_buildSensorObj(JsonObject& obj, IDevice* p) {
 // ── routes ────────────────────────────────────────────────────
 void WebAPI::_route_root() {
   _cors();
+  // Setup mode → the setup portal instead of the dashboard (which
+  // would have no network data to show anyway).
+  if (_setupMode()) {
+    _srv->send_P(200, "text/html; charset=utf-8", SETUP_HTML);
+    return;
+  }
   _srv->send_P(200, "text/html; charset=utf-8", DASH_HTML);
+}
+
+// ── _setupMode ───────────────────────────────────────────────
+bool WebAPI::_setupMode() {
+  return !Settings::isProvisioned() || (_fw && _fw->forceSetupPortal());
+}
+
+// ── URL-decode helpers (approach B setup form) ───────────────
+//  We decode the submitted fields ourselves so any password
+//  character round-trips exactly, independent of how the HTTPS
+//  compat layer parses request bodies.
+static String _urlDecode(const String& s) {
+  auto hex = [](char h) -> int {
+    if (h >= '0' && h <= '9') return h - '0';
+    if (h >= 'a' && h <= 'f') return h - 'a' + 10;
+    if (h >= 'A' && h <= 'F') return h - 'A' + 10;
+    return -1;
+  };
+  String out;
+  out.reserve(s.length());
+  for (size_t i = 0; i < s.length(); ++i) {
+    char c = s[i];
+    if (c == '+') {
+      out += ' ';
+    } else if (c == '%' && i + 2 < s.length()) {
+      int hi = hex(s[i + 1]), lo = hex(s[i + 2]);
+      if (hi >= 0 && lo >= 0) { out += char((hi << 4) | lo); i += 2; }
+      else out += c;
+    } else {
+      out += c;
+    }
+  }
+  return out;
+}
+
+//  Extract one field from an application/x-www-form-urlencoded blob
+//  ("a=1&b=2"), URL-decoded.  Returns "" when the key is absent.
+//  Safe for values containing & = etc. because URLSearchParams
+//  percent-encodes those inside values.
+static String _formField(const String& body, const String& key) {
+  int i = 0;
+  const int n = body.length();
+  while (i < n) {
+    int amp = body.indexOf('&', i);
+    if (amp < 0) amp = n;
+    int eq = body.indexOf('=', i);
+    if (eq >= 0 && eq < amp) {
+      if (body.substring(i, eq) == key) return _urlDecode(body.substring(eq + 1, amp));
+    }
+    i = amp + 1;
+  }
+  return "";
+}
+
+//  Read one setup field: our own decode of the raw body/query first,
+//  then the server's arg parser as a fallback.  Templated on the
+//  server type so it works for both the HTTPS (_srv) and the plain
+//  HTTP captive (_httpRedirect) servers.
+template <class Srv>
+static String _setupField(Srv* srv, const String& src, const char* key) {
+  String v = _formField(src, key);
+  if (v.isEmpty()) v = srv->arg(key);
+  return v;
+}
+
+// ── serveSetupSubmit ─────────────────────────────────────────
+//  Shared handler for POST /api/setup, used by both the HTTPS server
+//  and the plain-HTTP captive server.  Saves Wi-Fi + the optional
+//  dashboard / MQTT / Claude credentials to NVS, marks the device
+//  provisioned, replies, then reboots.  POST keeps the secrets out of
+//  the request-line log; we decode the fields ourselves so any
+//  character round-trips exactly.
+template <class Srv>
+static void serveSetupSubmit(Srv* srv) {
+  String src = srv->arg("plain");          // raw POST body, or ""
+  if (src.isEmpty()) {                      // fall back to the query
+    String full = srv->uri();
+    int qm = full.indexOf('?');
+    if (qm >= 0) src = full.substring(qm + 1);
+  }
+
+  String ssid   = _setupField(srv, src, "ssid");
+  String wpass  = _setupField(srv, src, "wpass");
+  String user   = _setupField(srv, src, "user");
+  String upass  = _setupField(srv, src, "upass");
+  String mqttH  = _setupField(srv, src, "mqtthost");
+  String mqttPt = _setupField(srv, src, "mqttport");
+  String mqttU  = _setupField(srv, src, "mqttuser");
+  String mqttP  = _setupField(srv, src, "mqttpass");
+  String claude = _setupField(srv, src, "claude");
+  // Standalone-AP checkbox: present (any non-empty value) → run as our
+  // own access point serving the dashboard, with no upstream Wi-Fi.
+  bool apOnly   = _setupField(srv, src, "aponly").length() > 0;
+
+  if (apOnly) {
+    // No network to join — clear any stored STA creds so _connectWiFi()
+    // takes the access-point path, and record the deliberate choice.
+    Settings::setWifi("", "");
+    Settings::setApOnly(true);
+  } else {
+    if (ssid.isEmpty()) {
+      srv->send(400, "application/json", "{\"error\":\"wifi ssid required\"}");
+      return;
+    }
+    Settings::setWifi(ssid, wpass);
+    Settings::setApOnly(false);
+  }
+  // Optional sections: only overwrite when the user supplied a value,
+  // otherwise keep whatever is already set (NVS or compiled).
+  if (user.length())   Settings::setWebLogin(user, upass);
+  if (mqttH.length()) {
+    long p = mqttPt.toInt();                 // 0/invalid → keep current
+    Settings::setMqttServer(mqttH,
+        (p > 0 && p < 65536) ? (uint16_t)p : Settings::mqttPort());
+  }
+  if (mqttU.length())  Settings::setMqtt(mqttU, mqttP);
+  if (claude.length()) Settings::setClaudeKey(claude);
+  Settings::markProvisioned();
+
+  // Static JSON (no field interpolation → no quoting hazards).
+  if (apOnly) {
+    srv->send(200, "application/json",
+              "{\"ok\":true,\"msg\":\"Saved. Rebooting as a standalone access "
+              "point — reconnect to the device's Wi-Fi and open its IP.\"}");
+    Serial.println(F("[WebAPI] Provisioned via setup portal — standalone AP "
+                     "(dashboard) mode. Rebooting."));
+  } else {
+    srv->send(200, "application/json",
+              "{\"ok\":true,\"msg\":\"Saved. Rebooting to join your Wi-Fi...\"}");
+    Serial.printf("[WebAPI] Provisioned via setup portal — SSID '%s'. "
+                  "Rebooting.\n", ssid.c_str());
+  }
+  delay(1200);
+  ESP.restart();
+}
+
+// ── _route_setup ─────────────────────────────────────────────
+//  HTTPS entry point for the provisioning submit (see route table).
+void WebAPI::_route_setup() { serveSetupSubmit(_srv); }
+
+// ── _route_settingsGet ───────────────────────────────────────
+//  GET /api/settings — current NON-SECRET state for the editor.
+//  Returns SSID + usernames (so the form can pre-fill) and set/unset
+//  booleans for the secrets.  Never returns a password or the key.
+void WebAPI::_route_settingsGet() {
+  JsonDocument doc;
+  doc["provisioned"] = Settings::isProvisioned();
+  doc["ap_only"]     = Settings::apOnlyMode();
+  doc["wifi_ssid"]   = Settings::wifiSsid();
+  doc["web_user"]    = Settings::webUser();
+  doc["mqtt_host"]   = Settings::mqttHost();
+  doc["mqtt_port"]   = Settings::mqttPort();
+  doc["mqtt_user"]   = Settings::mqttUser();
+  doc["mqtt_set"]    = Settings::mqttConfigured();
+  doc["claude_set"]  = Settings::claudeConfigured();
+  _json(doc);
+}
+
+// ── _route_settingsSave ──────────────────────────────────────
+//  POST /api/settings/save — update any supplied credential, keeping
+//  the existing value where a field is left blank, then reboot so the
+//  changes take effect (re-inits WiFi / MQTT / Claude cleanly).
+void WebAPI::_route_settingsSave() {
+  String src = _srv->arg("plain");
+  if (src.isEmpty()) {
+    String full = _srv->uri();
+    int qm = full.indexOf('?');
+    if (qm >= 0) src = full.substring(qm + 1);
+  }
+  String ssid   = _setupField(_srv, src, "ssid");
+  String wpass  = _setupField(_srv, src, "wpass");
+  String user   = _setupField(_srv, src, "user");
+  String upass  = _setupField(_srv, src, "upass");
+  String mqttH  = _setupField(_srv, src, "mqtthost");
+  String mqttPt = _setupField(_srv, src, "mqttport");
+  String mqttU  = _setupField(_srv, src, "mqttuser");
+  String mqttP  = _setupField(_srv, src, "mqttpass");
+  String claude = _setupField(_srv, src, "claude");
+  bool   apOnly = _setupField(_srv, src, "aponly").length() > 0;
+
+  // Standalone-AP toggle takes precedence: when on, clear the stored STA
+  // credentials so the next boot comes up as an access point serving the
+  // dashboard.  When off, fall through to the normal SSID handling (and
+  // make sure any earlier AP-only choice is cleared).
+  if (apOnly) {
+    Settings::setWifi("", "");
+    Settings::setApOnly(true);
+  } else {
+    Settings::setApOnly(false);
+    // For each section: a blank password/key means "keep current", so we
+    // merge against the present effective value before saving the pair.
+    if (ssid.length()) {
+      Settings::setWifi(ssid, wpass.length() ? wpass : Settings::wifiPass());
+    }
+  }
+  if (user.length()) {
+    Settings::setWebLogin(user, upass.length() ? upass : Settings::webPass());
+  }
+  if (mqttH.length()) {
+    long p = mqttPt.toInt();
+    Settings::setMqttServer(mqttH,
+        (p > 0 && p < 65536) ? (uint16_t)p : Settings::mqttPort());
+  }
+  if (mqttU.length()) {
+    Settings::setMqtt(mqttU, mqttP.length() ? mqttP : Settings::mqttPass());
+  }
+  if (claude.length()) Settings::setClaudeKey(claude);
+
+  _srv->send(200, "application/json",
+             "{\"ok\":true,\"msg\":\"Saved. Rebooting...\"}");
+  Serial.println(F("[WebAPI] Settings updated via dashboard — rebooting."));
+  delay(1200);
+  ESP.restart();
 }
 
 void WebAPI::_route_all() {
   JsonDocument doc;
   doc["uptime_s"]  = millis() / 1000;
-  doc["ip"]        = WiFi.localIP().toString();
+  doc["ip"]        = _fw->apMode() ? WiFi.softAPIP().toString()
+                                   : WiFi.localIP().toString();
   doc["port"]      = WEB_HTTPS_PORT;
   doc["scheme"]    = "https";
   doc["free_heap"] = ESP.getFreeHeap();
@@ -1081,8 +1654,10 @@ void WebAPI::_route_config() {
   doc["i2c_int_scl"]      = bi.i2cIntScl;
   doc["i2c_ext_sda"]      = bi.i2cExtSda;
   doc["i2c_ext_scl"]      = bi.i2cExtScl;
-  doc["wifi_ssid"]        = WIFI_SSID;
+  doc["wifi_ssid"]        = Settings::wifiSsid();   // effective (NVS or compiled)
   doc["wifi_mode"]        = _fw->apMode() ? "ap" : "station";
+  doc["ap_only"]          = Settings::apOnlyMode();
+  doc["provisioned"]      = Settings::isProvisioned();
   doc["poll_ms"]          = POLL_MS;
   doc["i2c_int_freq"]     = I2C_INT_FREQ;
   doc["i2c_ext_freq"]     = I2C_EXT_FREQ;
@@ -1194,7 +1769,7 @@ void WebAPI::_route_endpoints() {
                                   : WiFi.localIP().toString();
   doc["port"]     = WEB_HTTPS_PORT;
   doc["scheme"]   = "https";
-  doc["auth"]     = strlen(WEB_AUTH_USER) > 0 ? "basic" : "none";
+  doc["auth"]     = Settings::webUser().length() > 0 ? "basic" : "none";
 
   JsonArray arr = doc["endpoints"].to<JsonArray>();
   for (const auto& e : eps) {
@@ -1216,9 +1791,9 @@ void WebAPI::_buildMqttStatus(JsonDocument& doc) {
   uint32_t    now       = millis();
 
   doc["enabled"]        = _fw->mqtt.enabled;
-  doc["configured"]     = strlen(MQTT_HOST) > 0;
-  doc["host"]           = MQTT_HOST;
-  doc["port"]           = MQTT_PORT;
+  doc["configured"]     = Settings::mqttHost().length() > 0;
+  doc["host"]           = Settings::mqttHost();
+  doc["port"]           = Settings::mqttPort();
   doc["transport"]      = MQTTOut::transport();   // "plain" or "tls"
   doc["tls"]            = MQTTOut::tls();
   doc["tls_mutual"]     = MQTTOut::tlsMutual();    // X.509 client-cert auth

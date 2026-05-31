@@ -14,8 +14,8 @@
 //  joining a network — for a standalone unit with no network to
 //  join.  Connect a phone/laptop to that AP and open the
 //  dashboard at the AP's IP.
-[[maybe_unused]] constexpr char WIFI_SSID[] = "";
-[[maybe_unused]] constexpr char WIFI_PASSWORD[] = "";
+//  ⚠ WIFI_SSID and WIFI_PASSWORD are now defined in Secrets.h
+//  (git-ignored).  This file no longer carries any credential.
 // give up after this many ms
 [[maybe_unused]] constexpr unsigned long WIFI_TIMEOUT_MS = 15000;
 
@@ -29,7 +29,11 @@
 //  ⚠ AP_PASSWORD must be 8-63 characters — WPA2's minimum.  A
 //  shorter or empty password makes the access point fail to start.
 [[maybe_unused]] constexpr char AP_SSID[] = "M5Stack-Framework";
-[[maybe_unused]] constexpr char AP_PASSWORD[] = "m5stack-config";
+//  ⚠ AP_PASSWORD is defined in Secrets.h (git-ignored).  If it is
+//  left at the shipped default "m5stack-config" (or shorter than the
+//  WPA2 8-char minimum), the framework generates a RANDOM per-device
+//  AP password at first boot, persists it in NVS, and shows it on the
+//  LCD + serial.  Set a real value in Secrets.h to use your own.
 
 // ── Time / NTP ───────────────────────────────────────────────
 //  After WiFi connects, the framework syncs the ESP32's internal
@@ -94,8 +98,60 @@
 // the old plain-HTTP server.  Still pick a dedicated password: the
 // certificate is self-signed, and anyone with physical access to
 // the SD card can read the server's private key (/https_pk.der).
-[[maybe_unused]] constexpr char WEB_AUTH_USER[] = "user";
-[[maybe_unused]] constexpr char WEB_AUTH_PASS[] = "password";
+//  ⚠ WEB_AUTH_USER / WEB_AUTH_PASS are defined in Secrets.h
+//  (git-ignored).  The shipped default user / password pair is
+//  REFUSED at boot when SECURITY_STRICT (below) is true — change it
+//  in Secrets.h before deploying.
+
+// ── Security posture ──────────────────────────────────────────
+//  Credentials now live in Secrets.h (git-ignored); see that file.
+//
+//  SECURITY_STRICT controls what happens at boot when a credential
+//  is still at its guessable shipped default (dashboard login
+//  user / password):
+//    true  → REFUSE TO BOOT.  A full-screen red warning is shown on
+//            the LCD and printed to serial, and the framework halts
+//            before bringing up WiFi / the web server.  Forces you
+//            to set real credentials in Secrets.h.  Recommended for
+//            anything that leaves the bench.
+//    false → boot anyway, but print a loud one-time warning on the
+//            LCD + serial.  Convenient while developing.
+//
+//  Note: leaving WEB_AUTH_USER empty ("") in Secrets.h is a
+//  DELIBERATE "auth disabled" choice, not a weak default — it does
+//  not trip the strict halt (it only logs an informational note).
+#define SECURITY_STRICT true
+
+//  FACTORY_RESET_HOLD_DISABLED controls the hardware escape hatch:
+//  touching the screen (CoreS3 / Core2) or holding any of BtnA/B/C
+//  (Core1 / Core2) during a short window at power-on (see
+//  FACTORY_RESET_WINDOW_MS) wipes the saved NVS settings and reboots
+//  into the setup portal.
+//    false → hold-to-reset is ENABLED (the default — a guaranteed
+//            recovery path if the network or passwords are wrong).
+//    true  → hold-to-reset is DISABLED.  Use on a deployed/kiosk
+//            unit where you don't want a bystander able to wipe its
+//            settings from the front panel.  (NVS can still be
+//            cleared by reflashing with flash-erase enabled.)
+#define FACTORY_RESET_HOLD_DISABLED false
+
+//  How long (ms) the boot factory-reset window stays open watching
+//  for a touch / button press.  The press is caught the instant it's
+//  seen (boot continues immediately once detected), so this is the
+//  MAXIMUM added boot delay when no one is pressing.  Bigger = more
+//  forgiving timing for the finger-hold; smaller = faster normal
+//  boot.  Ignored when FACTORY_RESET_HOLD_DISABLED is true.
+[[maybe_unused]] constexpr unsigned long FACTORY_RESET_WINDOW_MS = 2500;
+
+//  CAPTIVE_DNS_ENABLED runs a tiny DNS responder in setup mode that
+//  points every hostname at the device, so a phone auto-opens the setup
+//  portal (like a public-WiFi login).  It uses WiFiUDP (the lwIP
+//  SOCKETS layer — socket/bind/recvfrom), which is thread-safe; the
+//  bundled DNSServer and AsyncUDP both call raw udp_new and trip a
+//  fatal "Required to lock TCPIP core functionality" assert on this
+//  ESP-IDF build.  Default true.  Set false to skip the auto-open; the
+//  portal is still reachable by browsing to the AP IP (http://192.168.4.1/).
+#define CAPTIVE_DNS_ENABLED true
 
 // ── Serial ────────────────────────────────────────────────────
 [[maybe_unused]] constexpr unsigned long SERIAL_BAUD = 115200;
@@ -352,9 +408,8 @@
 [[maybe_unused]] constexpr char MQTT_HOST[] = "";
 // plain MQTT 1883; MQTTS 8883
 [[maybe_unused]] constexpr unsigned MQTT_PORT = 1883;
-// empty = anonymous / cert-only
-[[maybe_unused]] constexpr char MQTT_USER[] = "";
-[[maybe_unused]] constexpr char MQTT_PASS[] = "";
+// ⚠ MQTT_USER / MQTT_PASS (empty = anonymous / cert-only) are
+// defined in Secrets.h (git-ignored).
 // must be unique per device on the broker.  On AWS IoT this should
 // match the Thing name — some policies gate the connection on
 // clientId == thing-name.
@@ -415,21 +470,11 @@ PASTE THE BROKER'S CA / ROOT CERTIFICATE HERE
 )EOF";
 #endif  // !MQTT_TLS_INSECURE
 
-#if MQTT_TLS_MUTUAL
-[[maybe_unused]] static const char MQTT_CLIENT_CERT[] = R"EOF(
------BEGIN CERTIFICATE-----
-PASTE THIS DEVICE'S CLIENT CERTIFICATE (xxxx-certificate.pem.crt) HERE
------END CERTIFICATE-----
-)EOF";
-
-[[maybe_unused]] static const char MQTT_CLIENT_KEY[] = R"EOF(
------BEGIN RSA PRIVATE KEY-----
-PASTE THIS DEVICE'S PRIVATE KEY (xxxx-private.pem.key) HERE
------END RSA PRIVATE KEY-----
-)EOF";
-#endif  // MQTT_TLS_MUTUAL
-
 #endif  // MQTT_TLS
+//  ⚠ MQTT_CLIENT_CERT and MQTT_CLIENT_KEY (the device's own cert and
+//  PRIVATE KEY, needed when MQTT_TLS_MUTUAL) are defined in Secrets.h
+//  (git-ignored).  Only the public CA / root cert (MQTT_CA_CERT,
+//  above) stays here, since it is not a secret.
 
 // ── Home Assistant MQTT Discovery ─────────────────────────────
 //  When MQTT_HA_DISCOVERY is true, the framework publishes one
@@ -537,8 +582,8 @@ PASTE THIS DEVICE'S PRIVATE KEY (xxxx-private.pem.key) HERE
 [[maybe_unused]] constexpr char     ROUTER_PI_HOST[] = "";  // set to your Pi orchestrator (e.g. "pi1.local") to enable escalation
 [[maybe_unused]] constexpr unsigned ROUTER_PI_PORT = 443;
 [[maybe_unused]] constexpr char     ROUTER_PI_PATH[] = "/delegate";
-// Bearer token the orchestrator checks (""=no Authorization header).
-[[maybe_unused]] constexpr char     ROUTER_BEARER[] = "";
+// ⚠ ROUTER_BEARER (the token the orchestrator checks; "" = no
+// Authorization header) is defined in Secrets.h (git-ignored).
 // TLS verification for the orchestrator connection.  A LAN box with
 // a self-signed cert → true (encrypt only, skip the cert check).
 // For a pinned CA, set false and add ROUTER_CA_CERT + setCACert()
@@ -633,7 +678,7 @@ PASTE THIS DEVICE'S PRIVATE KEY (xxxx-private.pem.key) HERE
 //  Leave CLAUDE_API_KEY empty ("") to keep the plugin compiled in
 //  but inert — it logs a warning at boot and answers every query
 //  with "[api key not set]" instead of calling out.
-[[maybe_unused]] constexpr char CLAUDE_API_KEY[] = "";
+//  ⚠ CLAUDE_API_KEY is defined in Secrets.h (git-ignored).
 // Model id.  A small, fast, cheap model suits a gadget; bump up only
 // if you need stronger text answers.
 [[maybe_unused]] constexpr char CLAUDE_MODEL[] = "claude-haiku-4-5";
@@ -649,4 +694,13 @@ PASTE THIS DEVICE'S PRIVATE KEY (xxxx-private.pem.key) HERE
 // Anthropic API version header.  See docs.anthropic.com for the
 // current value; this rarely needs changing.
 [[maybe_unused]] constexpr char CLAUDE_API_VERSION[] = "2023-06-01";
+
+// ── Credentials ───────────────────────────────────────────────
+//  All real secrets (WiFi, AP password, dashboard login, MQTT
+//  user/pass + client cert/key, router bearer, Claude API key) live
+//  in Secrets.h, which is git-ignored.  It is included LAST so the
+//  MQTT_TLS / MQTT_TLS_MUTUAL macros above are defined before its
+//  conditional cert blocks are evaluated.  Copy Secrets.h.example to
+//  Secrets.h on a fresh checkout and fill in this device's values.
+#include "Secrets.h"
 

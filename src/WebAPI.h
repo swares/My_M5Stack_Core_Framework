@@ -24,6 +24,9 @@
 #include "IDevice.h"
 
 class Framework;
+// WiFiUDP (captive-portal DNS responder, setup mode only) comes from
+// <WiFi.h> above, where it is a typedef for NetworkUDP — so no forward
+// declaration here (forward-declaring a typedef as `class` is illegal).
 
 class WebAPI {
  public:
@@ -35,7 +38,14 @@ class WebAPI {
  private:
   ESPWebServerSecure* _srv = nullptr;     // HTTPS  :WEB_HTTPS_PORT
   ESPWebServer* _httpRedirect = nullptr;  // HTTP :WEB_HTTP_REDIRECT_PORT
+  WiFiUDP* _dnsUdp = nullptr;             // captive DNS, setup mode only
   Framework* _fw = nullptr;
+
+  // Service one pending captive-DNS query (called from update() in
+  // setup mode).  Answers any A query with the AP IP.  Uses WiFiUDP
+  // (lwIP sockets layer) — thread-safe, unlike DNSServer / AsyncUDP
+  // which call raw udp_new and assert on this ESP-IDF build.
+  void _serviceCaptiveDns();
 
   // Handler for the plain-HTTP port-80 server: 301 every request to
   // the equivalent HTTPS URL.
@@ -49,6 +59,15 @@ class WebAPI {
   String _reqPath();
 
   void _route_root();
+  void _route_setup();        // first-boot provisioning submit (approach B)
+  void _route_settingsGet();  // GET  /api/settings — non-secret state
+  void _route_settingsSave(); // POST /api/settings/save — edit + reboot
+  // True when "/" should serve the setup portal instead of the
+  // dashboard: the device is unprovisioned, OR it failed to join its
+  // configured Wi-Fi and dropped to the recovery AP.  In this mode
+  // "/" and "/api/setup" are served without auth so the credentials
+  // can be (re)entered.
+  bool _setupMode();
   void _route_all();
   void _route_plugin();
   void _route_control(const String& slug);

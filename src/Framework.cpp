@@ -3,6 +3,8 @@
 // ============================================================
 #include "Framework.h"
 #include "IPinDevice.h"   // non-I2C pin devices — activated after the I2C scan
+#include "Security.h"     // config-hygiene helpers (default-cred guard, AP pw)
+#include "Settings.h"     // runtime NVS settings (WiFi + dashboard login)
 #include <cstdio>         // snprintf
 
 Framework::Framework() = default;
@@ -58,6 +60,9 @@ void Framework::begin() {
 
   _initBuses();
   display.begin(*_board);
+  Settings::begin();  // load runtime creds (NVS) before WiFi / auth read them
+  _checkFactoryResetHold();  // hold screen/button at boot → wipe + setup portal
+  _securityAudit();   // guard against guessable default credentials
   _connectWiFi();
   _scanAndBind();
 
@@ -204,17 +209,27 @@ void Framework::_initBuses() {
 void Framework::_connectWiFi() {
   if (!webApi.enabled) return;
 
-  // No station SSID configured → run as our own access point so
-  // the dashboard is still reachable.  (Config.h: leave WIFI_SSID
-  // empty to select this mode.)
-  if (WIFI_SSID[0] == '\0') {
+  // No station SSID configured → run as our own access point so the
+  // dashboard / setup portal is still reachable.  The effective SSID
+  // is the NVS value (set via the setup portal) or, failing that, the
+  // compiled Secrets.h WIFI_SSID.  Empty in both → AP mode.
+  // Go to the AP (setup portal) when there's no SSID OR the device is
+  // unprovisioned — e.g. right after a factory reset, which forces the
+  // portal even if Secrets.h bakes in a WiFi SSID.  Otherwise a
+  // compiled/leftover SSID would auto-join and the portal would never
+  // appear.
+  // Standalone-AP mode was chosen deliberately in the portal: always
+  // bring up our own access point (serving the dashboard), regardless of
+  // any compiled-in WIFI_SSID fallback.
+  String ssid = Settings::wifiSsid();
+  if (Settings::apOnlyMode() || ssid.isEmpty() || !Settings::isProvisioned()) {
     _startAccessPoint();
     return;
   }
 
-  Serial.printf("[WiFi] Connecting to '%s'", WIFI_SSID);
+  Serial.printf("[WiFi] Connecting to '%s'", ssid.c_str());
   WiFi.mode(WIFI_STA);
-  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+  WiFi.begin(ssid.c_str(), Settings::wifiPass().c_str());
 
   uint32_t t = millis();
   while (WiFi.status() != WL_CONNECTED) {
@@ -226,32 +241,211 @@ void Framework::_connectWiFi() {
   if (WiFi.status() == WL_CONNECTED) {
     String ip = WiFi.localIP().toString();
     Serial.printf("\n[WiFi] Connected  IP=%s\n", ip.c_str());
-    display.showWiFi(WIFI_SSID, ip);
+    display.showWiFi(ssid, ip);
     _syncTime();
   } else {
-    Serial.println(F("\n[WiFi] Failed – web API disabled"));
-    webApi.enabled = false;
-    display.showError("WiFi failed\nWeb API disabled");
+    // Couldn't join the configured network (wrong password, 2.4 GHz
+    // vs 5 GHz, out of range, AP down...).  Rather than disable the
+    // web server and strand the user, fall back to our own AP and
+    // serve the setup portal so the Wi-Fi can be corrected without
+    // erasing flash.
+    Serial.printf("\n[WiFi] Could not join '%s' — falling back to the "
+                  "setup portal on the access point.\n", ssid.c_str());
+    display.showError("WiFi join failed\n\nStarting setup AP\nto re-enter WiFi");
     delay(2000);
+    _forceSetupPortal = true;
+    _startAccessPoint();   // keeps the web API up; portal reachable
   }
+}
+
+// ── _checkFactoryResetHold ───────────────────────────────────
+//  Hardware escape hatch.  At boot the device opens a short window
+//  (FACTORY_RESET_WINDOW_MS) and shows a prompt; touch the screen
+//  (CoreS3 / Core2) or hold any of BtnA/B/C (Core1 / Core2) during
+//  that window and keep holding to wipe the saved NVS settings and
+//  reboot into the setup portal.  This guarantees a way back even if
+//  the network and both passwords are wrong, without erasing flash
+//  from a PC.
+//
+//  Why a polling window (not a single sample): the capacitive touch
+//  controller needs a few update cycles after boot before it reports
+//  a contact, and a one-shot check is easy to mistime — so we poll
+//  the whole window and require a sustained hold to confirm.
+void Framework::_checkFactoryResetHold() {
+#if FACTORY_RESET_HOLD_DISABLED
+  return;  // hold-to-reset disabled in Config.h
+#else
+  // Nothing to wipe on an already-unprovisioned device — and skipping
+  // is essential: right after a reset the device reboots unprovisioned
+  // while the finger may still be on the screen (or the panel reports a
+  // boot-time phantom touch), which would otherwise re-trigger the wipe
+  // every boot in an endless loop instead of reaching the setup portal.
+  if (!Settings::isProvisioned()) {
+    Serial.println(F("[Security] Unprovisioned — skipping reset window, "
+                     "going to setup portal."));
+    return;
+  }
+  // Touch warm-up.  The CoreS3 FT-series controller reports phantom
+  // contacts for the first cycles after power-on; drain and ignore
+  // them so a ghost press doesn't trigger a false reset.  We rely on
+  // getCount() only — getDetail(0).isPressed() latches true on a
+  // stale slot at boot and is not a reliable presence signal.
+  for (uint32_t w = millis(); millis() - w < 600;) { M5.update(); delay(20); }
+
+  auto held = []() -> bool {
+    M5.update();
+    return (M5.Touch.getCount() > 0) ||
+           M5.BtnA.isPressed() || M5.BtnB.isPressed() || M5.BtnC.isPressed();
+  };
+
+  const uint32_t WINDOW_MS  = FACTORY_RESET_WINDOW_MS;  // watch for a press
+  const uint32_t CONFIRM_MS = 1000;                     // must hold this long
+
+  Serial.printf("[Security] Factory-reset window open for %lu ms — touch the "
+                "screen now to wipe settings.\n", (unsigned long)WINDOW_MS);
+  display.showNotice("RESET?",
+                     String("Touch the screen NOW\nto wipe WiFi + login\n"
+                            "and return to setup.\n\nIgnore to boot normally."));
+
+  // Poll the window.  A press must be DEBOUNCED — stay down for a few
+  // consecutive samples — to count, rejecting any residual phantom.
+  uint32_t start = millis();
+  bool sawPress = false;
+  uint8_t lastCount = 255;
+  while (millis() - start < WINDOW_MS) {
+    uint8_t c = M5.Touch.getCount();
+    if (c != lastCount) {
+      Serial.printf("[Security]  touch count=%u\n", c);
+      lastCount = c;
+    }
+    if (held()) {
+      bool stable = true;
+      for (int i = 0; i < 6; ++i) {      // ~150 ms of continuous contact
+        delay(25);
+        if (!held()) { stable = false; break; }
+      }
+      if (stable) { sawPress = true; break; }
+    }
+    delay(25);
+  }
+  if (!sawPress) {
+    Serial.println(F("[Security] No reset hold — booting normally."));
+    return;
+  }
+
+  Serial.println(F("[Security] Press detected — KEEP HOLDING to confirm wipe..."));
+  display.showError("KEEP HOLDING...\n\nWiping saved\nWiFi + login");
+  // Require the touch to persist for CONFIRM_MS, but tolerate brief
+  // dropouts (the panel occasionally reports 0 for a single sample) —
+  // only cancel if released continuously for >350 ms.
+  uint32_t t = millis();
+  uint32_t lastHeld = millis();
+  while (millis() - t < CONFIRM_MS) {
+    if (held()) {
+      lastHeld = millis();
+    } else if (millis() - lastHeld > 350) {
+      Serial.println(F("[Security] Released — factory reset cancelled."));
+      display.showError("Cancelled.\nBooting normally.");
+      delay(1000);
+      return;
+    }
+    delay(20);
+  }
+
+  Settings::factoryReset();
+  Serial.println(F("[Security] Factory reset complete — rebooting into the "
+                   "setup portal."));
+  display.showError("FACTORY RESET\n\nSettings wiped.\nRebooting to the\nsetup portal.");
+  delay(1500);
+  ESP.restart();
+#endif  // FACTORY_RESET_HOLD_DISABLED
+}
+
+// ── _securityAudit ───────────────────────────────────────────
+//  Config-hygiene guard (approach A).  Runs right after the display
+//  is up and before WiFi / the web server come online.  If the
+//  dashboard login is still the guessable shipped user / password,
+//  it warns loudly on the LCD + serial.  With SECURITY_STRICT it
+//  goes further and HALTS — the device never reaches the network
+//  with a default credential.  An empty WEB_AUTH_USER (auth
+//  deliberately disabled) is noted but does not trip the halt.
+void Framework::_securityAudit() {
+  // Unprovisioned → the first-boot setup portal (served on the AP) is
+  // the remedy for missing/default credentials, so don't halt here;
+  // the device must reach the network to BE set up.
+  if (!Settings::isProvisioned()) {
+    Serial.println(F("[Security] Unprovisioned — setup portal will start "
+                     "on the access point."));
+    return;
+  }
+  // Evaluate the EFFECTIVE dashboard login (NVS override, else the
+  // compiled Secrets.h value).
+  String user = Settings::webUser();
+  if (user.isEmpty()) {
+    Serial.println(F("[Security] Dashboard auth is DISABLED "
+                     "(no web user set)."));
+    return;
+  }
+  if (!(user == "user" && Settings::webPass() == "password")) {
+    Serial.println(F("[Security] Credential check passed."));
+    return;
+  }
+
+  Serial.println(F("\n***************  SECURITY WARNING  ***************"));
+  Serial.println(F("  Dashboard login is the guessable default"));
+  Serial.println(F("  user / password."));
+#if SECURITY_STRICT
+  if (Settings::hasStoredCredentials()) {
+    // The default login came from the setup portal (NVS), not from
+    // Secrets.h.  Dead-halting here would strand the device with no
+    // way back to the portal (NVS survives a reflash).  Instead wipe
+    // the provisioning and reboot into the AP + setup portal so the
+    // login can be re-entered.  Next boot is unprovisioned, so this
+    // does not loop.
+    Serial.println(F("  Clearing provisioning and rebooting into the"));
+    Serial.println(F("  setup portal so you can set a real password."));
+    Serial.println(F("*************************************************\n"));
+    display.showError("DEFAULT PASSWORD\n\nResetting to setup\nportal. Reconnect to\nthe AP and choose a\nreal password.");
+    Settings::factoryReset();
+    delay(3000);
+    ESP.restart();
+  }
+  // Default login is compiled into Secrets.h — the fix is to edit the
+  // file and reflash, so halting (with guidance) is the right call.
+  Serial.println(F("  Edit src/Secrets.h, set real WEB_AUTH_USER /"));
+  Serial.println(F("  WEB_AUTH_PASS, then reflash.  SECURITY_STRICT on"));
+  Serial.println(F("  — refusing to boot."));
+  Serial.println(F("*************************************************\n"));
+  display.showError("DEFAULT PASSWORD\n\nSet WEB_AUTH_USER /\nWEB_AUTH_PASS in\nSecrets.h, then\nreflash.\n\nBoot halted.");
+  for (;;) { M5.update(); delay(1000); }
+#else
+  Serial.println(F("  SECURITY_STRICT is off — booting anyway."));
+  Serial.println(F("*************************************************\n"));
+  display.showError("WARNING\n\nDefault dashboard\npassword in use.\nSet it in Secrets.h");
+  delay(3000);
+#endif
 }
 
 // ── _startAccessPoint ────────────────────────────────────────
 //  Brings the device up as a standalone WPA2 access point
-//  (Config.h AP_SSID / AP_PASSWORD) instead of joining a network.
-//  Selected automatically when WIFI_SSID is empty.  There is no
-//  upstream internet, so NTP is deliberately skipped — the SD
-//  logger and /api fall back to uptime-relative timestamps,
-//  exactly as they do after a failed NTP sync.
+//  (AP_SSID from Config.h; the password is resolved by Security so a
+//  shipped-default AP password becomes a random per-device one)
+//  instead of joining a network.  Selected automatically when
+//  WIFI_SSID is empty.  There is no upstream internet, so NTP is
+//  deliberately skipped — the SD logger and /api fall back to
+//  uptime-relative timestamps, exactly as after a failed NTP sync.
 void Framework::_startAccessPoint() {
+  bool generated = false;
+  String apPass = Security::effectiveApPassword(generated);
+
   Serial.printf("[WiFi] No WIFI_SSID set — starting access point '%s'\n",
                 AP_SSID);
   WiFi.mode(WIFI_AP);
-  if (!WiFi.softAP(AP_SSID, AP_PASSWORD)) {
-    // softAP() almost always fails for one reason: AP_PASSWORD is
+  if (!WiFi.softAP(AP_SSID, apPass.c_str())) {
+    // softAP() almost always fails for one reason: the password is
     // shorter than WPA2's 8-character minimum.
     Serial.println(F("\n[WiFi] softAP() failed — web API disabled.  "
-                     "AP_PASSWORD must be 8-63 chars."));
+                     "AP password must be 8-63 chars."));
     webApi.enabled = false;
     display.showError("AP start failed\nWeb API disabled");
     delay(2000);
@@ -261,6 +455,17 @@ void Framework::_startAccessPoint() {
   String ip = WiFi.softAPIP().toString();
   Serial.printf("[WiFi] Access point up — SSID '%s'  IP=%s\n",
                 AP_SSID, ip.c_str());
+  if (generated) {
+    // A random per-device password was minted (the shipped default
+    // was left in place).  It lives only on the device — show it so
+    // the installer can join, then carry on to the normal WiFi card.
+    Serial.printf("[Security] AP password (random, per-device): %s\n",
+                  apPass.c_str());
+    display.showNotice("AP PASSWORD",
+                       String("SSID: ") + AP_SSID + "\nPass: " + apPass +
+                           "\n\nWrite this down.\nSet your own in\nSecrets.h.");
+    delay(8000);
+  }
   display.showWiFi(AP_SSID, ip);
 }
 

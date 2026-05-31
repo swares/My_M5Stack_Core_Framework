@@ -124,6 +124,37 @@ void DisplayManager::showError(const String& msg) {
   M5.Display.endWrite();
 }
 
+// ── showNotice ────────────────────────────────────────────────
+//  Full-screen informational banner with an amber header band.
+//  Honours explicit '\n' line breaks in `body` and word-wraps long
+//  lines at ~26 chars.  Used for the random AP-password notice.
+void DisplayManager::showNotice(const String& title, const String& body) {
+  if (!_ready) return;
+  M5.Display.startWrite();
+  M5.Display.fillScreen(C_BG);
+  M5.Display.fillRect(0, 0, _W, 40, C_ACNT);
+  M5.Display.setTextColor(C_TEXT, C_ACNT);
+  M5.Display.drawCentreString(title, _W / 2, 11, &fonts::FreeSansBold9pt7b);
+  M5.Display.setTextColor(C_TEXT, C_BG);
+
+  String tmp = body;
+  int y = 52;
+  while (tmp.length() && y < _H - 16) {
+    int nl = tmp.indexOf('\n');
+    String line = (nl >= 0) ? tmp.substring(0, nl) : tmp;
+    String rest = (nl >= 0) ? tmp.substring(nl + 1) : "";
+    // hard-wrap an over-long segment
+    if (line.length() > 26) {
+      rest = line.substring(26) + (rest.length() ? "\n" + rest : "");
+      line = line.substring(0, 26);
+    }
+    M5.Display.drawString(line, 10, y, &fonts::Font2);
+    tmp = rest;
+    y += 18;
+  }
+  M5.Display.endWrite();
+}
+
 // ── _header ───────────────────────────────────────────────────
 void DisplayManager::_header(const String& title, uint16_t col) {
   M5.Display.fillRect(0, 0, _W, 46, col);

@@ -73,6 +73,13 @@ class Framework {
   // as a station.
   bool apMode() const { return _apMode; }
 
+  // True when the device dropped into the AP because it could NOT
+  // join its configured Wi-Fi (a provisioned unit with bad/missing
+  // network).  WebAPI uses this to serve the setup portal — instead
+  // of the dashboard — so the Wi-Fi credentials can be corrected
+  // without erasing flash.
+  bool forceSetupPortal() const { return _forceSetupPortal; }
+
   // Format the current time as "YYYY-MM-DDTHH:MM:SS" into the
   // caller's buffer.  Returns the same boolean as timeSynced() —
   // true when the formatted string is real wall-clock, false when
@@ -122,6 +129,8 @@ class Framework {
 
   void _initBuses();
   void _recoverBus(uint8_t sda, uint8_t scl);
+  void _checkFactoryResetHold();  // hold screen/button at boot → wipe + portal
+  void _securityAudit();     // guard against default credentials at boot
   void _connectWiFi();
   void _startAccessPoint();  // softAP, used when WIFI_SSID is empty
   void _syncTime();
@@ -130,6 +139,7 @@ class Framework {
 
   bool _timeSynced = false;
   bool _apMode = false;  // true once _startAccessPoint() succeeds
+  bool _forceSetupPortal = false;  // STA join failed → serve portal on AP
 
   // Write the channel-select byte to a PCA9548A.  channel = 0..7
   // selects that channel; any other value (e.g. -1) writes 0x00

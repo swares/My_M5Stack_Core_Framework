@@ -37,6 +37,9 @@ class DisplayManager {
   void showWiFi(const String& ssid, const String& ip);
   void showScan(uint8_t* addrs, uint8_t n, bool isInternal);
   void showError(const String& msg);
+  // Full-screen informational banner (amber header).  Used for the
+  // random AP-password notice and other non-error call-outs.
+  void showNotice(const String& title, const String& body);
 
  private:
   bool enabled = OUT_DISPLAY;
@@ -122,5 +125,6 @@ class DisplayManager {
   void showWiFi(const String&, const String&) {}
   void showScan(uint8_t*, uint8_t, bool) {}
   void showError(const String&) {}
+  void showNotice(const String&, const String&) {}
 };
 #endif                // OUT_DISPLAY
