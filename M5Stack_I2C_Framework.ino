@@ -191,7 +191,7 @@
 //                          because that route puts a key in flash.
 #include "plugins/NetDevice_Router.h"
 #if ROUTER_DIRECT_API
-#include "plugins/NetDevice_ClaudeAPI.h"
+#include "plugins/NetDevice_ClaudeAPI_History.h"  // multi-turn variant (keeps conversation context)
 #endif
 
 Framework fw;
@@ -375,7 +375,7 @@ void setup() {
 #endif  // ENABLE_UART_DEVICES
 
 #if ROUTER_DIRECT_API
-  auto* claudeAPI = new NetDevice_ClaudeAPI();            // direct "smart text" route
+  auto* claudeAPI = new NetDevice_ClaudeAPI_History();    // direct "smart text" route (multi-turn)
   fw.addPlugin(claudeAPI);
   fw.addPlugin(new NetDevice_Router(moduleLLM, claudeAPI));
 #else
