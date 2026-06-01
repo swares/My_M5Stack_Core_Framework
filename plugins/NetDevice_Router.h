@@ -574,6 +574,11 @@ class NetDevice_Router : public IPinDevice {
 
   void _reset() {
     _client.stop();
+    // Propagate the reset downstream so the dashboard "Clear" button is a
+    // true reset of the whole chain — wipes the local model's scratch and
+    // the Claude API plugin's conversation history, not just the router.
+    if (_localLlm)  _localLlm->command("clear", "");
+    if (_directApi) _directApi->command("clear", "");
     _prompt = "";
     _answer = "";
     _rxbuf = "";
