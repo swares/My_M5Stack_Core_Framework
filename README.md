@@ -1950,6 +1950,19 @@ For each mode/option, the files and variables to change:
     classification prompt is tunable via `ROUTER_TIEBREAK_PROMPT`, and
     `route_taken` reports `"classifying"` while the verdict is pending.
 
+71. **Control endpoint accepts POST (GET still works).**  A
+    `/api/<slug>/set` call changes physical state (and can bill an
+    LLM/cloud token), so it shouldn't ride a cacheable/prefetchable GET
+    — a browser pre-connect or link probe could misfire a relay or spend
+    a token, and the values land in URL logs.  The dashboard widgets and
+    the LLM/router panels now `POST` the params in a url-encoded body;
+    `_route_control` reads params from the query string AND the POST body
+    (decoded the same way the setup/settings handlers do, since the
+    secure server doesn't fold a POST body into `arg()/args()`).  The old
+    `GET ?param=value` form is unchanged, so existing bookmarks and
+    scripts keep working — nothing breaks.  CORS now advertises
+    `GET,POST,OPTIONS`; `/api/endpoints` lists the route as POST.
+
 ---
 
 ## License
