@@ -1062,7 +1062,7 @@ live-editable or needs a rebuild:
 | Category | Mode (pick one) | Options | Status (read-only) | Source |
 |---|---|---|---|---|
 | **Network** | Station (join SSID) · Standalone AP · _Setup/recovery portal_ | AP SSID / pass | `wifi_mode`, IP, `ap_only` | NVS · Secrets |
-| **Dashboard &amp; API** | HTTPS + redirect · _Plain-HTTP AP (planned)_ | Basic Auth · Ports | auth user, ports | Secrets · Config |
+| **Dashboard &amp; API** | HTTPS + redirect · Plain-HTTP AP | Basic Auth · Ports | auth user, ports | Secrets · Config |
 | **MQTT telemetry** | Off · Plain (TCP) · TLS (user/pass) · Mutual TLS (AWS IoT) · TLS-insecure | HA discovery · Retain/LWT · Host/topic | connected, `transport`, `tls_verified` | NVS · Config · Secrets |
 | **Local outputs** | _Display off_ · Scroll ticker · Fixed grid | Serial · SD log | SD mounted, log file | Config |
 | **Security &amp; recovery** | Strict (halt) · Warn-only | Factory-reset hold · Random AP pass | default-cred warnings | Config · Secrets |
@@ -1092,7 +1092,7 @@ For each mode/option, the files and variables to change:
 **Dashboard &amp; API**
 
 - _HTTPS + redirect_ — `Config.h`: `WEB_HTTPS_PORT` (443), `WEB_HTTP_REDIRECT_PORT` (80); cert in `https_cert.h`.
-- _Plain-HTTP AP_ — planned, no variable yet.
+- _Plain-HTTP AP_ — `Config.h`: `WEB_AP_PLAIN_HTTP` (default `false`). When `true` **and** the device is a provisioned standalone AP (`ap_only`), the full dashboard + REST API are served over plain HTTP on `WEB_HTTP_REDIRECT_PORT` (80) and the HTTPS server is not started — no self-signed-cert warning over the device's own WPA2 AP, and the TLS RAM stays free. No effect in station mode (always HTTPS + redirect) or setup mode (captive portal is already plain HTTP).
 - _Basic Auth_ — `Secrets.h`: `WEB_AUTH_USER` (empty disables auth), `WEB_AUTH_PASS`; or edit the web login at runtime from the Settings page (NVS).
 
 **MQTT telemetry**
@@ -1962,6 +1962,22 @@ For each mode/option, the files and variables to change:
     `GET ?param=value` form is unchanged, so existing bookmarks and
     scripts keep working — nothing breaks.  CORS now advertises
     `GET,POST,OPTIONS`; `/api/endpoints` lists the route as POST.
+
+72. **Plain-HTTP standalone-AP dashboard (`WEB_AP_PLAIN_HTTP`).**  A new
+    `Config.h` switch (default `false`) that, when set **and** the device
+    is a provisioned standalone access point (`ap_only`), serves the full
+    dashboard + REST API over plain HTTP on `WEB_HTTP_REDIRECT_PORT` (80)
+    and does **not** start the TLS server at all.  Over the device's own
+    WPA2 AP the link is already encrypted, so the self-signed cert only
+    added a browser warning with no security benefit; skipping TLS also
+    frees its RAM.  Implemented as an early branch in `WebAPI::begin()`
+    plus a server-generic `_wirePlainAp<Srv>()` that mirrors the HTTPS
+    route table and reuses the same `_buildSensorObj` / `_buildMqttStatus`
+    / `_buildSdStatus` / `scanReport` builders (and the `serveSetupSubmit`
+    template pattern), so the JSON shapes stay identical — only the
+    transport and the `/api/all` `scheme`/`port` differ.  No effect in
+    station mode (always HTTPS + redirect) or setup mode (the captive
+    portal is already plain HTTP); default builds are unchanged.
 
 ---
 
