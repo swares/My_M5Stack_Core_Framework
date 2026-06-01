@@ -923,6 +923,35 @@ f.addEventListener('submit',function(e){
 // for the captive (plain-HTTP) server.
 template <class Srv> static void serveSetupSubmit(Srv* srv);
 
+// ── Plain-HTTP-AP response helpers (templated on server type) ─
+//  Mirror _cors / _json / _requireAuth / _reqPath but operate on any
+//  server, so the standalone-AP routes can reuse the JSON the HTTPS
+//  routes build.  Same pattern as serveSetupSubmit<Srv>.
+template <class Srv> static void apCors(Srv* s) {
+  s->sendHeader("Access-Control-Allow-Origin",  "*");
+  s->sendHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
+  s->sendHeader("Access-Control-Allow-Headers", "Content-Type");
+  s->sendHeader("Cache-Control",                "no-cache");
+}
+template <class Srv> static void apSendJson(Srv* s, JsonDocument& doc, int code = 200) {
+  apCors(s);
+  String out;
+  serializeJson(doc, out);
+  s->send(code, "application/json", out);
+}
+template <class Srv> static bool apAuth(Srv* s) {
+  String user = Settings::webUser();
+  if (user.isEmpty()) return true;                 // auth disabled
+  if (s->authenticate(user.c_str(), Settings::webPass().c_str())) return true;
+  s->requestAuthentication();
+  return false;
+}
+template <class Srv> static String apPath(Srv* s) {
+  String u = s->uri();
+  int q = u.indexOf('?');
+  return (q >= 0) ? u.substring(0, q) : u;
+}
+
 void WebAPI::begin(Framework* fw) {
   _fw = fw;
   if (!enabled) return;
@@ -941,6 +970,24 @@ void WebAPI::begin(Framework* fw) {
   //  you ever need to debug an MQTTS handshake, comment this line
   //  out temporarily to see the esp-tls diagnostics again.
   esp_log_level_set("esp-tls-mbedtls", ESP_LOG_NONE);
+
+  // ── Standalone-AP plain-HTTP mode ─────────────────────────
+  //  When WEB_AP_PLAIN_HTTP is set and we're a provisioned standalone
+  //  access point, serve the dashboard + API over plain HTTP on port
+  //  80 and DON'T start the TLS server at all (no self-signed-cert
+  //  warning over our own WPA2 AP, and the TLS RAM stays free).  Setup
+  //  mode (captive portal) and station mode are unaffected and fall
+  //  through to the HTTPS path below.
+  _plainAp = WEB_AP_PLAIN_HTTP && !_setupMode() && Settings::apOnlyMode();
+  if (_plainAp) {
+    _httpRedirect = new ESPWebServer(WEB_HTTP_REDIRECT_PORT);
+    _wirePlainAp(_httpRedirect);
+    _httpRedirect->begin();
+    Serial.printf("[WebAPI] STANDALONE AP — dashboard over PLAIN HTTP on "
+                  "port %d (HTTPS disabled via WEB_AP_PLAIN_HTTP)\n",
+                  WEB_HTTP_REDIRECT_PORT);
+    return;
+  }
 
   // ── HTTPS server (TLS) ────────────────────────────────────
   //  ESPWebServerSecure mirrors the standard Arduino WebServer
@@ -1885,6 +1932,272 @@ void WebAPI::_buildMqttStatus(JsonDocument& doc) {
   if (st.lastPublishMs) {
     doc["since_last_publish_s"] = (now - st.lastPublishMs) / 1000;
   }
+}
+
+// ── _wirePlainAp ─────────────────────────────────────────────
+//  Standalone-AP dashboard over plain HTTP.  Intentionally mirrors the
+//  HTTPS route table in begin() — if you add or rename a route there,
+//  mirror it here.  Reuses the same server-independent builders
+//  (_buildSensorObj / _buildMqttStatus / _buildSdStatus /
+//  Framework::scanReport) so the JSON shapes stay identical; only the
+//  transport and the /api/all scheme+port differ.  (/api/setup and
+//  /api/endpoints are intentionally omitted: this path only runs when
+//  already provisioned, and the dashboard degrades gracefully without
+//  the endpoint chips.)
+template <class Srv>
+void WebAPI::_wirePlainAp(Srv* s) {
+  // ── HTML pages ────────────────────────────────────────────
+  s->on("/", [this, s]() {
+    if (!apAuth(s)) return;
+    apCors(s);
+    s->send_P(200, "text/html; charset=utf-8", DASH_HTML);
+  });
+  s->on("/settings", [this, s]() {
+    if (!apAuth(s)) return;
+    apCors(s);
+    s->send_P(200, "text/html; charset=utf-8", SETTINGS_HTML);
+  });
+
+  // /api/all — same doc as _route_all(), but reports the plain-HTTP
+  // scheme/port and always the AP IP.
+  auto buildAll = [this](JsonDocument& doc) {
+    doc["uptime_s"]  = millis() / 1000;
+    doc["ip"]        = WiFi.softAPIP().toString();
+    doc["port"]      = WEB_HTTP_REDIRECT_PORT;
+    doc["scheme"]    = "http";
+    doc["free_heap"] = ESP.getFreeHeap();
+    doc["cpu_mhz"]   = ESP.getCpuFreqMHz();
+    doc["flash_mb"]  = ESP.getFlashChipSize() / (1024 * 1024);
+    char ts[24];
+    bool synced = _fw->nowIso8601(ts, sizeof(ts));
+    doc["datetime"]    = ts;
+    doc["time_synced"] = synced;
+    const auto& bi = _fw->board();
+    JsonObject bobj = doc["board"].to<JsonObject>();
+    bobj["short_name"] = bi.shortName;
+    bobj["long_name"]  = bi.longName;
+    bobj["i2c_int_sda"]= bi.i2cIntSda;
+    bobj["i2c_int_scl"]= bi.i2cIntScl;
+    bobj["i2c_ext_sda"]= bi.i2cExtSda;
+    bobj["i2c_ext_scl"]= bi.i2cExtScl;
+    JsonArray arr = doc["sensors"].to<JsonArray>();
+    for (auto* p : _fw->plugins()) {
+      JsonObject obj = arr.add<JsonObject>();
+      _buildSensorObj(obj, p);
+    }
+  };
+  s->on("/api/all", [this, s, buildAll]() {
+    if (!apAuth(s)) return;
+    JsonDocument doc; buildAll(doc); apSendJson(s, doc);
+  });
+  s->on("/api/rescan", [this, s, buildAll]() {
+    if (!apAuth(s)) return;
+    _fw->rescanAll();
+    JsonDocument doc; buildAll(doc); apSendJson(s, doc);
+  });
+  s->on("/api/scan", [this, s]() {
+    if (!apAuth(s)) return;
+    JsonDocument doc; _fw->scanReport(doc); apSendJson(s, doc);
+  });
+  s->on("/api/config", [this, s]() {
+    if (!apAuth(s)) return;
+    JsonDocument doc;
+    const auto& bi = _fw->board();
+    doc["board_short_name"] = bi.shortName;
+    doc["board_long_name"]  = bi.longName;
+    doc["i2c_int_sda"]      = bi.i2cIntSda;
+    doc["i2c_int_scl"]      = bi.i2cIntScl;
+    doc["i2c_ext_sda"]      = bi.i2cExtSda;
+    doc["i2c_ext_scl"]      = bi.i2cExtScl;
+    doc["wifi_ssid"]        = Settings::wifiSsid();
+    doc["wifi_mode"]        = _fw->apMode() ? "ap" : "station";
+    doc["ap_only"]          = Settings::apOnlyMode();
+    doc["provisioned"]      = Settings::isProvisioned();
+    doc["poll_ms"]          = POLL_MS;
+    doc["i2c_int_freq"]     = I2C_INT_FREQ;
+    doc["i2c_ext_freq"]     = I2C_EXT_FREQ;
+    doc["out_web"]          = OUT_WEB;
+    doc["out_serial"]       = OUT_SERIAL;
+    doc["out_display"]      = OUT_DISPLAY;
+    doc["display_scroll"]   = DISPLAY_SCROLL;
+    doc["display_cycle_ms"] = DISPLAY_CYCLE_MS;
+    doc["scheme"]           = "http";
+    apSendJson(s, doc);
+  });
+  s->on("/api/mqtt", [this, s]() {
+    if (!apAuth(s)) return;
+    JsonDocument doc; _buildMqttStatus(doc); apSendJson(s, doc);
+  });
+  s->on("/api/mqtt/publish", [this, s]() {
+    if (!apAuth(s)) return;
+    bool fired = _fw->mqtt.publishNow();
+    JsonDocument doc; _buildMqttStatus(doc); doc["publish_now"] = fired;
+    apSendJson(s, doc);
+  });
+  s->on("/api/sdcard", [this, s]() {
+    if (!apAuth(s)) return;
+    JsonDocument doc; _buildSdStatus(doc); apSendJson(s, doc);
+  });
+  s->on("/api/sdcard/flush", [this, s]() {
+    if (!apAuth(s)) return;
+    bool ok = _fw->sdlog.flush();
+    JsonDocument doc; _buildSdStatus(doc); doc["flushed"] = ok;
+    apSendJson(s, doc);
+  });
+  s->on("/api/sdcard/eject", [this, s]() {
+    if (!apAuth(s)) return;
+    bool ok = _fw->sdlog.eject();
+    JsonDocument doc; _buildSdStatus(doc); doc["ejected"] = ok;
+    apSendJson(s, doc);
+  });
+  s->on("/api/settings", [this, s]() {
+    if (!apAuth(s)) return;
+    JsonDocument doc;
+    doc["provisioned"] = Settings::isProvisioned();
+    doc["ap_only"]     = Settings::apOnlyMode();
+    doc["wifi_ssid"]   = Settings::wifiSsid();
+    doc["web_user"]    = Settings::webUser();
+    doc["mqtt_host"]   = Settings::mqttHost();
+    doc["mqtt_port"]   = Settings::mqttPort();
+    doc["mqtt_user"]   = Settings::mqttUser();
+    doc["mqtt_set"]    = Settings::mqttConfigured();
+    doc["claude_set"]  = Settings::claudeConfigured();
+    apSendJson(s, doc);
+  });
+
+  // Slug reads, control /set, and POST /api/settings/save land here.
+  s->onNotFound([this, s]() {
+    if (!apAuth(s)) return;
+    String path = apPath(s);
+
+    // POST /api/settings/save — mirror _route_settingsSave().
+    if (path == "/api/settings/save") {
+      String src = s->arg("plain");
+      if (src.isEmpty()) {
+        String full = s->uri();
+        int qm = full.indexOf('?');
+        if (qm >= 0) src = full.substring(qm + 1);
+      }
+      String ssid   = _setupField(s, src, "ssid");
+      String wpass  = _setupField(s, src, "wpass");
+      String user   = _setupField(s, src, "user");
+      String upass  = _setupField(s, src, "upass");
+      String mqttH  = _setupField(s, src, "mqtthost");
+      String mqttPt = _setupField(s, src, "mqttport");
+      String mqttU  = _setupField(s, src, "mqttuser");
+      String mqttP  = _setupField(s, src, "mqttpass");
+      String claude = _setupField(s, src, "claude");
+      bool   apOnly = _setupField(s, src, "aponly").length() > 0;
+      if (apOnly) {
+        Settings::setWifi("", "");
+        Settings::setApOnly(true);
+      } else {
+        Settings::setApOnly(false);
+        if (ssid.length())
+          Settings::setWifi(ssid, wpass.length() ? wpass : Settings::wifiPass());
+      }
+      if (user.length())
+        Settings::setWebLogin(user, upass.length() ? upass : Settings::webPass());
+      if (mqttH.length()) {
+        long p = mqttPt.toInt();
+        Settings::setMqttServer(mqttH,
+            (p > 0 && p < 65536) ? (uint16_t)p : Settings::mqttPort());
+      }
+      if (mqttU.length())
+        Settings::setMqtt(mqttU, mqttP.length() ? mqttP : Settings::mqttPass());
+      if (claude.length()) Settings::setClaudeKey(claude);
+      s->send(200, "application/json",
+              "{\"ok\":true,\"msg\":\"Saved. Rebooting...\"}");
+      Serial.println(F("[WebAPI] Settings updated via AP dashboard — rebooting."));
+      delay(1200);
+      ESP.restart();
+      return;
+    }
+
+    if (!path.startsWith("/api/")) {
+      JsonDocument doc;
+      doc["error"] = "not found";
+      doc["uri"]   = s->uri();
+      apSendJson(s, doc, 404);
+      return;
+    }
+
+    // /api/<slug>/set — control a device.  Mirror _route_control().
+    if (path.endsWith("/set")) {
+      String slug = path.substring(5, path.length() - 4);
+      IDevice* target = nullptr;
+      for (auto* p : _fw->plugins()) {
+        if (String(p->slug()) == slug) { target = p; break; }
+      }
+      JsonDocument doc;
+      doc["slug"] = slug;
+      if (!target) {
+        doc["error"] = "plugin not found: " + slug;
+        apSendJson(s, doc, 404);
+        return;
+      }
+      if (!target->active) {
+        doc["error"] = "plugin not active";
+        apSendJson(s, doc, 409);
+        return;
+      }
+      if (!target->controllable()) {
+        doc["error"] = "plugin is not controllable";
+        apSendJson(s, doc, 400);
+        return;
+      }
+      JsonArray applied  = doc["applied"].to<JsonArray>();
+      JsonArray rejected = doc["rejected"].to<JsonArray>();
+      auto apply = [&](const String& k, const String& v) {
+        if (k.isEmpty()) return;
+        bool ok = target->command(k, v);
+        JsonObject e = (ok ? applied : rejected).add<JsonObject>();
+        e["param"] = k;
+        e["value"] = v;
+      };
+      int nArgs = s->args();
+      for (int i = 0; i < nArgs; i++) {
+        String k = s->argName(i);
+        if (k == "plain") continue;
+        apply(k, s->arg(i));
+      }
+      String body = s->arg("plain");
+      int start = 0;
+      const int n = body.length();
+      while (start < n) {
+        int amp = body.indexOf('&', start);
+        if (amp < 0) amp = n;
+        int eq = body.indexOf('=', start);
+        if (eq >= 0 && eq < amp) {
+          String k = body.substring(start, eq);
+          String v = _urlDecode(body.substring(eq + 1, amp));
+          k.trim();
+          apply(k, v);
+        }
+        start = amp + 1;
+      }
+      doc["ok"] = (rejected.size() == 0 && applied.size() > 0);
+      JsonObject st = doc["state"].to<JsonObject>();
+      target->toJson(st);
+      apSendJson(s, doc, rejected.size() ? 400 : 200);
+      return;
+    }
+
+    // /api/<slug> — that plugin's readings.
+    String slug = path.substring(5);
+    for (auto* p : _fw->plugins()) {
+      if (String(p->slug()) == slug) {
+        JsonDocument doc;
+        JsonObject obj = doc.to<JsonObject>();
+        _buildSensorObj(obj, p);
+        apSendJson(s, doc);
+        return;
+      }
+    }
+    JsonDocument doc;
+    doc["error"] = "plugin not found: " + slug;
+    apSendJson(s, doc, 404);
+  });
 }
 #endif  // OUT_WEB
 

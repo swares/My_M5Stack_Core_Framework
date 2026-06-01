@@ -82,6 +82,19 @@
 [[maybe_unused]] constexpr unsigned WEB_HTTPS_PORT = 443;
 [[maybe_unused]] constexpr unsigned WEB_HTTP_REDIRECT_PORT = 80;
 
+// Plain-HTTP access-point dashboard.  When true AND the device is
+// running as a STANDALONE access point (apOnlyMode — provisioned with
+// no upstream Wi-Fi), the full dashboard + REST API are served over
+// plain HTTP on WEB_HTTP_REDIRECT_PORT (80) and the HTTPS server is
+// NOT started.  Rationale: on the device's own WPA2 AP the link is
+// already encrypted, so a self-signed cert only adds a browser
+// warning with no security benefit; plain HTTP also frees the TLS
+// RAM.  No effect in station (joined-Wi-Fi) mode — that always uses
+// HTTPS + the port-80 redirect.  Default false: HTTPS everywhere,
+// behavior unchanged.  (Setup-mode captive portal is already plain
+// HTTP regardless of this flag.)
+[[maybe_unused]] constexpr bool WEB_AP_PLAIN_HTTP = false;
+
 // Back-compat alias: older code/docs that say WEB_SERVER_PORT mean
 // "the port the dashboard is on", which is now the HTTPS port.
 #define WEB_SERVER_PORT WEB_HTTPS_PORT

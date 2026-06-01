@@ -40,6 +40,10 @@ class WebAPI {
   ESPWebServer* _httpRedirect = nullptr;  // HTTP :WEB_HTTP_REDIRECT_PORT
   WiFiUDP* _dnsUdp = nullptr;             // captive DNS, setup mode only
   Framework* _fw = nullptr;
+  // True when serving the dashboard over PLAIN HTTP as a provisioned
+  // standalone AP (WEB_AP_PLAIN_HTTP && apOnly).  Set in begin(); in
+  // this mode the HTTPS server (_srv) is never created.
+  bool _plainAp = false;
 
   // Service one pending captive-DNS query (called from update() in
   // setup mode).  Answers any A query with the AP IP.  Uses WiFiUDP
@@ -77,6 +81,13 @@ class WebAPI {
   void _route_sdcard();
   void _route_endpoints();
   void _route_404();
+
+  // Registers the full dashboard + REST API on a PLAIN-HTTP server for
+  // provisioned standalone-AP mode (WEB_AP_PLAIN_HTTP).  Templated on
+  // the server type, following the serveSetupSubmit<Srv> pattern, so it
+  // reuses the same _build* helpers the HTTPS routes use.  Defined in
+  // WebAPI.cpp; only instantiated there (for ESPWebServer).
+  template <class Srv> void _wirePlainAp(Srv* s);
 
   // Fills `doc` with the MQTT status snapshot used by both
   // /api/mqtt and /api/mqtt/publish.  Declared here so both routes
