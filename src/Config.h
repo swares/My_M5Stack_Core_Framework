@@ -678,7 +678,7 @@ PASTE THE BROKER'S CA / ROOT CERTIFICATE HERE
 //    auto* api = new NetDevice_ClaudeAPI();
 //    fw.addPlugin(llm); fw.addPlugin(api);
 //    fw.addPlugin(new NetDevice_Router(llm, api));
-#define ROUTER_DIRECT_API false
+#define ROUTER_DIRECT_API true
 // A non-coding turn is sent to the direct API (instead of the local
 // model) when it matches one of these words OR runs longer than
 // ROUTER_DIRECT_MIN_WORDS — i.e. it's too rich for the 0.5B but needs
@@ -737,3 +737,11 @@ PASTE THE BROKER'S CA / ROOT CERTIFICATE HERE
 //  Secrets.h on a fresh checkout and fill in this device's values.
 #include "Secrets.h"
 
+// ── Claude conversation memory (NetDevice_ClaudeAPI_History) ──
+//  Read only by the history-keeping variant of the Claude plugin.
+//  Macros (not constexpr) so the plugin's #ifndef defaults defer to
+//  these.  Total messages (user+assistant) resent each turn — keep
+//  EVEN so trimming stays user-first + alternating.  CHARS bounds both
+//  the heap and the tokens you resend.
+#define CLAUDE_HISTORY_MAX_MSGS  8
+#define CLAUDE_HISTORY_MAX_CHARS 4000

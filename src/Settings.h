@@ -81,3 +81,4 @@ bool hasStoredCredentials();
 void factoryReset();
 
 }  // namespace Settings
+

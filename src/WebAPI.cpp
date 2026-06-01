@@ -30,7 +30,8 @@
 //      (toggle / slider / colour / text / button).  The widgets
 //      are built generically from the "controls" array each
 //      controllable device emits via IDevice::controlSchema();
-//      changing a widget issues GET /api/<slug>/set?<id>=<value>.
+//      changing a widget issues POST /api/<slug>/set (body
+//      <id>=<value>); the old GET ?<id>=<value> form still works.
 //    • Read-only Sensors — reading cards, as before.
 //  An API request log panel records every /set call + its status.
 // ============================================================
@@ -358,10 +359,16 @@ function renderLog(){
 }
 
 // ── issue one control command ───────────────────────────────
+//  POST the param(s) in the body (a /set call changes physical state,
+//  so it shouldn't ride a cacheable/prefetchable GET).  `query` is
+//  already a url-encoded "k=v[&k=v]" string — send it verbatim as the
+//  body.  The device also still accepts the old GET ?query form.
 function sendCmd(slug,query){
-  var url='/api/'+slug+'/set?'+query;
-  var id=logReq('GET',url);
-  fetch(url)
+  var url='/api/'+slug+'/set';
+  var id=logReq('POST',url+'  '+query);
+  fetch(url,{method:'POST',
+    headers:{'Content-Type':'application/x-www-form-urlencoded'},
+    body:query})
     .then(function(r){logDone(id,r.status);})
     .catch(function(){logDone(id,0);});
 }
@@ -371,14 +378,24 @@ function sendCmd(slug,query){
 //  readings that a widget already represents).
 function readingRows(readings,skip){
   if(!readings)return '';
+  // Friendly labels for the Claude/Router conversation fields so the
+  // control card reads as a chat status, not raw toJson keys.
+  var CONVO={turns:'Turns',stop_reason:'Stop reason',awaiting:'Awaiting reply'};
   var html='';
   Object.keys(readings).filter(function(k){return !/_unit$/.test(k);})
     .forEach(function(k){
       if(skip&&skip.has(k))return;
       var v=readings[k];
       var u=readings[k+'_unit']||'';
-      var fv=(typeof v==='number')?(Number.isInteger(v)?v:v.toFixed(3)):v;
-      html+='<div class="row"><span class="rk">'+esc(k)+'</span>'+
+      var label=CONVO[k]||k,fv;
+      if(k==='awaiting'){
+        fv=(v===1||v===true)?'yes — reply to continue':'no';
+      }else if(k==='stop_reason'){
+        fv=v?(String(v)==='max_tokens'?'max_tokens (truncated)':String(v)):'—';
+      }else{
+        fv=(typeof v==='number')?(Number.isInteger(v)?v:v.toFixed(3)):v;
+      }
+      html+='<div class="row"><span class="rk">'+esc(label)+'</span>'+
             '<span><span class="rv">'+esc(fv)+'</span>'+
             (u?'<span class="ru">'+esc(u)+'</span>':'')+'</span></div>';
     });
@@ -668,9 +685,12 @@ function llmSend(){
   var bot=llmAdd('bot','…');
   llmBusy=true;
   document.getElementById('llm-send').disabled=true;
-  var u='/api/llm/set?ask='+encodeURIComponent(q);
-  var id=logReq('GET',u);
-  fetch(u).then(function(r){
+  var u='/api/llm/set';
+  var body='ask='+encodeURIComponent(q);
+  var id=logReq('POST',u);
+  fetch(u,{method:'POST',
+    headers:{'Content-Type':'application/x-www-form-urlencoded'},
+    body:body}).then(function(r){
     logDone(id,r.status);
     if(!r.ok){bot.textContent='[error '+r.status+']';llmEnd();return;}
     llmPoll(bot);
@@ -1231,7 +1251,8 @@ bool WebAPI::_requireAuth() {
 
 void WebAPI::_cors() {
   _srv->sendHeader("Access-Control-Allow-Origin",  "*");
-  _srv->sendHeader("Access-Control-Allow-Methods", "GET,OPTIONS");
+  _srv->sendHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
+  _srv->sendHeader("Access-Control-Allow-Headers", "Content-Type");
   _srv->sendHeader("Cache-Control",                "no-cache");
 }
 
@@ -1257,7 +1278,7 @@ void WebAPI::_buildSensorObj(JsonObject& obj, IDevice* p) {
     default:                   obj["mount"] = "pluggable"; break;
   }
   // True for output devices that accept commands via
-  // GET /api/<slug>/set?<param>=<value>.
+  // POST /api/<slug>/set (body <param>=<value>; GET ?query also works).
   obj["controllable"] = p->controllable();
   // Label "shared" on Core1 (single physical bus); otherwise route
   // through BoardInfo's bus pointers so the label matches reality
@@ -1574,15 +1595,25 @@ void WebAPI::_route_plugin() {
 }
 
 // ── _route_control ───────────────────────────────────────────
-//  GET /api/<slug>/set?<param>=<value>[&...]  — drive a
-//  controllable output device (relays, servos, LEDs).
+//  POST /api/<slug>/set   (body: <param>=<value>[&...])   — preferred
+//  GET  /api/<slug>/set?<param>=<value>[&...]              — still works
+//  Drive a controllable output device (relays, servos, LEDs).
 //
-//  Each query parameter is handed to the plugin's command(),
-//  which validates it.  Valid commands are applied; anything the
-//  plugin rejects (unknown param, malformed or out-of-range
-//  value) is listed under "rejected" and the hardware is left
-//  untouched for that parameter.  This is the ONLY control path —
-//  there is no serial/display control for output devices.
+//  POST is preferred because a /set call changes physical state (and
+//  may bill an LLM/cloud token): a GET can be fired speculatively by a
+//  browser prefetch / link probe and its values land in URL logs.  Both
+//  verbs are accepted so existing GET bookmarks and scripts keep
+//  working — params are read from the query string AND a url-encoded
+//  POST body, merged.  (The secure server doesn't fold a POST body into
+//  arg()/args() reliably, so the body is decoded here, the same way the
+//  setup/settings handlers do via _formField.)
+//
+//  Each parameter is handed to the plugin's command(), which validates
+//  it.  Valid commands are applied; anything the plugin rejects
+//  (unknown param, malformed or out-of-range value) is listed under
+//  "rejected" and the hardware is left untouched for that parameter.
+//  This is the ONLY control path — there is no serial/display control
+//  for output devices.
 //
 //  Controllable modules are all on the root (internal) bus, so
 //  no mux channel selection is needed here.
@@ -1616,14 +1647,43 @@ void WebAPI::_route_control(const String& slug) {
 
   JsonArray applied  = doc["applied"].to<JsonArray>();
   JsonArray rejected = doc["rejected"].to<JsonArray>();
-  int nArgs = _srv->args();
-  for (int i = 0; i < nArgs; i++) {
-    String k = _srv->argName(i);
-    String v = _srv->arg(i);
+
+  // Apply one param→value pair through the plugin, recording the result.
+  auto apply = [&](const String& k, const String& v) {
+    if (k.isEmpty()) return;
     bool ok = target->command(k, v);
     JsonObject e = (ok ? applied : rejected).add<JsonObject>();
     e["param"] = k;
     e["value"] = v;
+  };
+
+  // 1) Query-string params (the GET path, and any ?query on a POST).
+  //    Skip "plain" — that's the server's name for the raw POST body,
+  //    which we decode ourselves below, not a real command parameter.
+  int nArgs = _srv->args();
+  for (int i = 0; i < nArgs; i++) {
+    String k = _srv->argName(i);
+    if (k == "plain") continue;
+    apply(k, _srv->arg(i));
+  }
+
+  // 2) url-encoded POST body ("a=1&b=2"), decoded the same way the
+  //    setup/settings handlers do — the secure server doesn't reliably
+  //    expose body fields through arg()/args().
+  String body = _srv->arg("plain");
+  int start = 0;
+  const int n = body.length();
+  while (start < n) {
+    int amp = body.indexOf('&', start);
+    if (amp < 0) amp = n;
+    int eq = body.indexOf('=', start);
+    if (eq >= 0 && eq < amp) {
+      String k = body.substring(start, eq);
+      String v = _urlDecode(body.substring(eq + 1, amp));
+      k.trim();
+      apply(k, v);
+    }
+    start = amp + 1;
   }
   // ok = at least one command applied and nothing was rejected.
   doc["ok"] = (rejected.size() == 0 && applied.size() > 0);
@@ -1743,8 +1803,8 @@ void WebAPI::_route_endpoints() {
       "All plugins + readings + board + system info" },
     { "GET", "/api/{slug}",
       "One plugin's readings (e.g. /api/env4, /api/heart)" },
-    { "GET", "/api/{slug}/set",
-      "Control an output device (e.g. /api/4relay/set?relay1=1)" },
+    { "POST", "/api/{slug}/set",
+      "Control an output device (body relay1=1; GET ?relay1=1 also works)" },
     { "GET", "/api/scan",
       "Live I2C scan: root bus(es) + every hub channel" },
     { "GET", "/api/config",       "Framework configuration + board info" },
@@ -1827,3 +1887,4 @@ void WebAPI::_buildMqttStatus(JsonDocument& doc) {
   }
 }
 #endif  // OUT_WEB
+

@@ -60,7 +60,7 @@
 //  ⚠ A real billable credential when set.  Leave "" to keep the
 //  plugin inert.  Prefer routing through the Pi (which keeps the key
 //  off this device).  Rotate immediately if it ever leaks.
-[[maybe_unused]] constexpr char CLAUDE_API_KEY[] = "";
+[[maybe_unused]] constexpr char CLAUDE_API_KEY[] = "placeholder";
 
 // ── MQTT mutual-TLS client certificate + private key ─────────
 //  Only compiled in when MQTT_TLS && MQTT_TLS_MUTUAL (Config.h).
