@@ -94,6 +94,8 @@
 #include "plugins/Plugin_QMP6988.h"   // Barometric Pressure Unit (QMP6988) @ 0x70
 #include "plugins/Plugin_GP8413.h"    // DAC 2 Unit (GP8413) @ 0x59
 #include "plugins/Plugin_MultiGas.h"  // Grove Multichannel Gas Sensor V2 @ 0x08
+#include "plugins/Plugin_HM3301.h"    // Grove Laser PM2.5 Dust Sensor (HM3301) @ 0x40
+#include "plugins/Plugin_AS3935.h"    // SparkFun AS3935 lightning detector @ 0x03 (+ IRQ pin)
 #endif  // ENABLE_OPTIONAL_I2C
 
 // ── Stackable M-Bus modules (internal I2C bus) ───────────────
@@ -154,6 +156,9 @@
 #include "plugins/PinDevice_DualButton.h"
 #include "plugins/PinDevice_TubePressure.h"
 #include "plugins/PinDevice_Grove2Grove.h"
+//  GM-tube Geiger counter — interrupt-driven pulse count on Port-B
+//  White (any interrupt-capable input).  No extra library.
+#include "plugins/PinDevice_Geiger.h"
 //  The two below need extra libraries — uncomment the #include AND
 //  the matching registration line in setup() together:
 //    PinDevice_DS18B20  → "OneWire" + "DallasTemperature"
@@ -284,6 +289,25 @@ void setup() {
   // fw.addPlugin(new Plugin_FAN());          // 0x18  PWM fan speed + RPM
 #endif  // ENABLE_STACKABLE_MODULES
 
+#if ENABLE_OPTIONAL_I2C
+  // ── Grove Laser PM2.5 Dust Sensor (HM3301) — I2C @ 0x40 ──────
+  //  0x40 is shared with INA226 / INA3221 / SERVO2 (all registered
+  //  above).  The HM3301 has no WHO_AM_I, so it is detected
+  //  PERMISSIVELY (a checksum-valid 29-byte read) and therefore MUST
+  //  be registered AFTER those three — which is why this line sits
+  //  here rather than with the other sensors.  Slug "pm25"; the six
+  //  particle-count bins are in the JSON.
+  // fw.addPlugin(new Plugin_HM3301());
+
+  // ── SparkFun AS3935 lightning detector — I2C @ 0x03 + IRQ ────
+  //  Auto-detected at 0x03 (this framework probes the full 1..126
+  //  range).  Run I2C on Port-A and jump the board's IRQ pin to a free
+  //  GPIO — pass it as arg 1.  Args: (irqPin, outdoor, tuneCap,
+  //  maskDisturbers).  irqPin = -1 polls the INT register instead.
+  // fw.addPlugin(new Plugin_AS3935(36));                 // outdoor, IRQ on GPIO36
+  // fw.addPlugin(new Plugin_AS3935(36, false, 0, true)); // indoor, mask disturbers
+#endif  // ENABLE_OPTIONAL_I2C
+
   // ── Non-I2C pin devices (optional) ───────────────────────
   //  Uncomment the lines for whatever you have wired and set the
   //  pin numbers.  Unlike I2C plugins these are NOT auto-detected
@@ -331,6 +355,12 @@ void setup() {
   // fw.addPlugin(new PinDevice_DualButton(9,8));       // two push-buttons — G9 + G8
   // fw.addPlugin(new PinDevice_TubePressure(8));     // gas pressure gauge — G8 White (ADC)
   // fw.addPlugin(new PinDevice_Grove2Grove(8,9));      // switched 5V out + current — G8 + G9
+  // ── GM-tube Geiger counter (interrupt-driven; Port-B White) ──
+  //  Args: (signalPin, cpmPerUSv, buzzerPin, alarmUSv, emitTrace, clickSound)
+  //  Tube factor: SBM-20 = 154 · J305 = 123 (CPM per µSv/h).  CoreS3
+  //  pins: signal G8, buzzer G9.  Pass -1 for buzzerPin to disable it.
+  // fw.addPlugin(new PinDevice_Geiger(8));                               // bare: SBM-20, no buzzer/trace
+  // fw.addPlugin(new PinDevice_Geiger(8, 154.0f, 9, 5.0f, true, true));  // buzzer+alarm+live trace+ticks
 #endif  // ENABLE_PIN_DEVICES
 
   // ── UART device (optional — register at most ONE) ────────

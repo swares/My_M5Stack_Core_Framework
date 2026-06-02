@@ -1979,6 +1979,69 @@ For each mode/option, the files and variables to change:
     station mode (always HTTPS + redirect) or setup mode (the captive
     portal is already plain HTTP); default builds are unchanged.
 
+73. **GM-tube Geiger counter (`PinDevice_Geiger`) + dashboard card.**  A
+    new interrupt-driven pin device for a Geiger-Müller board (J305 /
+    SBM-20 / "CAJOE" RadiationD-v1.1).  An `IRAM_ATTR` ISR
+    (`attachInterruptArg`, FALLING) counts pulses on any interrupt-capable
+    input (Port-B White — GPIO36 / CoreS3 G8); `update()` keeps a 60-slot
+    counts-per-second ring → rolling **CPM**, **µSv/h** (CPM ÷ tube factor:
+    SBM-20 ≈ 154, J305 ≈ 123), cumulative **dose (µSv)**, and a
+    BACKGROUND/ELEVATED/DANGER **status** with an optional buzzer **alarm**
+    and audible per-click **ticks** (LEDC).  `toJson` emits `cpm`,
+    `usv_per_h`, `total_counts`, `dose_uSv`, `status`, `alarm`,
+    `tube_factor`, `pin`, `settling`, and — only when `emitTrace` is on — a
+    `trace[]` counts/sec array, so `/api/geiger` + MQTT + CSV + serial all
+    work for free.  A **special-cased dashboard card** (built from the
+    *Geiger Dashboard Card* design handoff) renders a big µSv/h hero, CPM,
+    a green/orange/red zone bar, an alarm-pulse animation, and a live
+    counts/sec sparkline (drawn only when `trace[]` is present).
+    Registration is a commented Port-B line (exclusive with the other
+    Port-B units); pass `-1` for the buzzer pin to disable it.  ⚠ Wiring an
+    Arduino/5 V GM board to the 3.3 V ESP32 input requires getting the OUT
+    line to a 0–3.3 V swing first (3.3 V pull-up for an open-collector
+    output, or a divider / BSS138 / opto for a push-pull 5 V output);
+    GPIO36 is input-only with no internal pull-up.
+
+74. **Grove Laser PM2.5 Dust Sensor (`Plugin_HM3301`).**  An I2C driver
+    for Seeed's HM3301 / HM330X laser particulate sensor.  The address is
+    7-bit **`0x40`** (the datasheet's `0x80`/`0x81` are the 8-bit
+    write/read forms).  `begin()` sends the `0x88` "select I2C" command
+    and validates one 29-byte frame (checksum = sum of bytes 0–27); since
+    the HM3301 has no `WHO_AM_I`, that checksum-valid read doubles as
+    **permissive detection**, so it only claims `0x40` when a real sensor
+    answers — and it must be registered **after** the strict, die-ID-gated
+    `0x40` devices (`INA226` / `INA3221` / `SERVO2`), the same
+    strict-before-permissive ordering used at 0x29 and 0x57.  `update()`
+    keeps the last good values on any bad/short frame.  Surfaces
+    `pm2_5` / `pm10` / `pm1_0` (atmospheric, µg/m³) as readings, plus the
+    CF=1 `*_std` variants and all six particle-count bins (`pc_0_3` …
+    `pc_10`) in `toJson` — `/api/pm25`, MQTT, CSV, serial and a dashboard
+    card for free.  Slug `pm25`; registration is a commented line in the
+    `ENABLE_OPTIONAL_I2C` block.  (Adds an I2C PM2.5 option alongside the
+    existing UART `UartDevice_PMSA003`.)
+
+75. **AS3935 lightning detector (`Plugin_AS3935`).**  An I2C driver for
+    the AMS AS3935 Franklin lightning sensor (SparkFun Qwiic board) — a
+    HYBRID device: register access over I2C plus an interrupt line.
+    Default address **`0x03`** (in the reserved low range many scanners
+    skip, but this framework probes the full 1..126 range, so it
+    auto-detects).  `begin()` issues `PRESET_DEFAULT` and verifies reg
+    `0x00` reads its reset value `0x24` (rejects non-AS3935 chips at
+    0x03), runs `CALIB_RCO`, applies indoor/outdoor AFE gain, an optional
+    antenna tuning cap and disturber mask, then attaches a RISING
+    interrupt on the constructor's **IRQ pin** (`IRAM_ATTR` ISR sets a
+    flag, same pattern as `PinDevice_Geiger`).  `update()` reads the INT
+    register on the flag, decodes lightning / disturber / noise, and on a
+    strike pulls distance (reg `0x07`; `0x3F` → -1 "out of range") and the
+    20-bit energy (regs `0x04`–`0x06`).  `irqPin = -1` polls the INT
+    register instead.  Readings `distance_km` / `energy` / `strikes`,
+    plus `last_event`, `disturbers`, `noise_events`, `mode`, `tune_cap` in
+    `toJson` — `/api/lightning` + MQTT + CSV + serial + card for free.
+    Slug `lightning`; constructor `(irqPin=36, outdoor=true, tuneCap=0,
+    maskDisturbers=false)`; commented registration in the
+    `ENABLE_OPTIONAL_I2C` block.  ⚠ Grove carries only I2C — run I2C on
+    Port-A and jump the IRQ pin to a free GPIO.
+
 ---
 
 ## License
