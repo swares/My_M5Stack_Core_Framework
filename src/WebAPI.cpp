@@ -274,6 +274,20 @@ footer{text-align:center;padding:20px;color:var(--dim);font-size:.72rem}
   </div>
 </div>
 
+<div class="llm" id="lora-panel" hidden>
+  <div class="llm-head"><span class="dot" id="lora-dot"></span>LoRa P2P Chat
+    <span id="lora-meta" style="opacity:.65;font-weight:400;font-size:.85em"></span></div>
+  <div class="llm-convo" id="lora-convo">
+    <div class="llm-hint">Messages to/from the peer node appear here&hellip;</div>
+  </div>
+  <div class="llm-input">
+    <input type="text" id="lora-prompt" autocomplete="off"
+           placeholder="Type a message and press Enter">
+    <button id="lora-send">Send</button>
+    <button id="lora-clear" class="ghost">Clear</button>
+  </div>
+</div>
+
 <div class="section-head" id="ctrl-head" hidden>
   <h2>Controllable Devices</h2>
   <span class="count" id="ctrl-count">0</span>
@@ -515,9 +529,10 @@ async function refresh(){
     var all=(d.sensors||[]).filter(function(x){return x.active;});
     // The Module LLM is controllable but has its own chat panel, so
     // it is kept out of the generic control grid.
-    var ctrl=all.filter(function(x){return x.controllable&&x.slug!=='llm';});
+    var ctrl=all.filter(function(x){return x.controllable&&x.slug!=='llm'&&x.slug!=='lora';});
     var sensors=all.filter(function(x){return !x.controllable;});
     llmRefresh(all.filter(function(x){return x.slug==='llm';})[0]);
+    loraRefresh(all.filter(function(x){return x.slug==='lora';})[0]);
 
     // Controllable devices — rebuild the grid only when the SET of
     // devices changes, so live widget state isn't clobbered on
@@ -702,6 +717,59 @@ function llmSend(){
   var i=document.getElementById('llm-prompt');
   if(i)i.addEventListener('keydown',function(e){
     if(e.key==='Enter'){e.preventDefault();llmSend();}
+  });
+})();
+
+// ── LoRa P2P chat panel ─────────────────────────────────────
+//  Shown only when a "lora" device is bound.  Polls /api/lora on its
+//  own ~1.5s cadence (independent of the 5s dashboard refresh) so
+//  incoming peer messages appear promptly; appends only log entries
+//  newer than the highest id already shown.
+var loraSeen=0,loraPolling=false;
+function loraRefresh(dev){
+  var p=document.getElementById('lora-panel');
+  if(!dev){p.hidden=true;loraPolling=false;return;}
+  p.hidden=false;
+  if(!loraPolling){loraPolling=true;loraPoll();}
+}
+function loraAppend(m){
+  var c=document.getElementById('lora-convo');
+  var h=c.querySelector('.llm-hint');if(h)h.remove();
+  var d=document.createElement('div');
+  d.className='llm-msg '+(m.dir==='tx'?'llm-user':'llm-bot');
+  var who=m.from?(esc(m.from)+': '):'';
+  var meta=(m.dir==='rx'&&m.rssi!=null)?('  ('+m.rssi+' dBm)'):'';
+  d.textContent=who+m.text+meta;
+  c.appendChild(d);c.scrollTop=c.scrollHeight;
+}
+function loraPoll(){
+  if(document.getElementById('lora-panel').hidden){loraPolling=false;return;}
+  fetch('/api/lora').then(function(r){return r.json();}).then(function(d){
+    var rd=(d&&d.readings)||{};
+    document.getElementById('lora-dot').className='dot'+(rd.connected?' on':'');
+    document.getElementById('lora-meta').textContent=
+      (rd.node?('['+rd.node+'] '):'')+'rx '+(rd.rx_count||0)+' · tx '+(rd.tx_count||0);
+    (rd.log||[]).forEach(function(m){if(m.id>loraSeen){loraAppend(m);loraSeen=m.id;}});
+  }).catch(function(){});
+  setTimeout(loraPoll,1500);
+}
+function loraSend(){
+  var inp=document.getElementById('lora-prompt');
+  var q=inp.value.trim();if(!q)return;
+  inp.value='';
+  sendCmd('lora','send='+encodeURIComponent(q));
+}
+(function(){
+  var b=document.getElementById('lora-send');
+  if(b)b.addEventListener('click',loraSend);
+  var cl=document.getElementById('lora-clear');
+  if(cl)cl.addEventListener('click',function(){
+    sendCmd('lora','clear=1');
+    document.getElementById('lora-convo').innerHTML='';loraSeen=0;
+  });
+  var i=document.getElementById('lora-prompt');
+  if(i)i.addEventListener('keydown',function(e){
+    if(e.key==='Enter'){e.preventDefault();loraSend();}
   });
 })();
 
