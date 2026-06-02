@@ -229,6 +229,34 @@ footer{text-align:center;padding:20px;color:var(--dim);font-size:.72rem}
 .llm-input button{background:var(--accent);color:#06121f;border:0;border-radius:7px;
   padding:8px 16px;font-weight:600;cursor:pointer;font-size:.82rem}
 .llm-input button:disabled{opacity:.5;cursor:default}
+
+/* ── Geiger card extensions (from Geiger Dashboard Card.html) ── */
+.card.geiger{grid-column:1 / -1;max-width:560px}
+.card.geiger.alarming{border-color:var(--red);box-shadow:0 0 0 1px var(--red),0 0 22px -6px var(--red)}
+@media (prefers-reduced-motion: no-preference){
+  .card.geiger.alarming{animation:geigerPulse 1.15s ease-in-out infinite}
+}
+@keyframes geigerPulse{50%{box-shadow:0 0 0 1px var(--red),0 0 30px -2px var(--red)}}
+.alarm-tag{font-size:.6rem;color:#fff;background:var(--red);padding:1px 6px;border-radius:3px;font-weight:700;letter-spacing:.04em;display:none}
+.card.geiger.alarming .alarm-tag{display:inline-block}
+.g-hero{display:flex;align-items:flex-end;gap:12px;padding:4px 0 12px}
+.g-big{font-size:2.9rem;line-height:.92;font-weight:700;font-variant-numeric:tabular-nums;letter-spacing:-.01em}
+.g-unit{font-size:.9rem;color:var(--dim);padding-bottom:7px}
+.g-sec{margin-left:auto;text-align:right;padding-bottom:6px}
+.g-sec .v{font-size:1.05rem;font-weight:600;font-variant-numeric:tabular-nums}
+.g-sec .u{font-size:.68rem;color:var(--dim);display:block;letter-spacing:.04em}
+.g-statuswrap{display:flex;align-items:center;gap:10px;margin:2px 0 4px}
+.g-status{font-size:.72rem;font-weight:700;letter-spacing:.09em}
+.g-settling{font-size:.6rem;color:var(--dim);border:1px solid var(--border);border-radius:20px;padding:1px 7px}
+.g-bar{position:relative;height:8px;border-radius:6px;margin:8px 0 2px;
+  background:linear-gradient(90deg,var(--green) 0 33%,var(--orange) 33% 66%,var(--red) 66% 100%);opacity:.85}
+.g-mark{position:absolute;top:-3px;width:3px;height:14px;border-radius:2px;background:var(--text);
+  box-shadow:0 0 0 2px var(--bg);transition:left .4s ease;transform:translateX(-50%)}
+.g-scale{display:flex;justify-content:space-between;font-size:.6rem;color:var(--dim);margin-top:3px}
+.g-spark-wrap{margin:12px 0 4px}
+.g-spark{width:100%;height:60px;display:block}
+.g-spark-cap{font-size:.62rem;color:var(--dim);margin-top:3px;display:flex;justify-content:space-between}
+.g-detail{margin-top:8px;padding-top:6px;border-top:1px solid var(--row-border)}
 </style>
 </head>
 <body>
@@ -504,6 +532,91 @@ function buildSensorCard(s){
   return card;
 }
 
+// ── Geiger dashboard card (from "Geiger Dashboard Card.html") ──
+//  Special-cased renderer for slug "geiger": big µSv/h hero, CPM, a
+//  zone bar, an optional counts/sec sparkline (only when toJson emits
+//  trace[]), and a detail block.  `s` is the merged toJson object
+//  (readings + name/slug).  drawSparks() paints the canvases after the
+//  cards are in the DOM.  Reuses the page's esc() and the shared card
+//  CSS vars; helpers are g-prefixed to avoid clashing with the grid.
+var G_SCALE_MAX=6.0;  // µSv/h full-scale on the zone bar
+function gStatusColor(st){return st==='DANGER'?'var(--red)':st==='ELEVATED'?'var(--orange)':'var(--green)';}
+function gRow(k,v,u){return '<div class="row"><span class="rk">'+esc(k)+'</span>'+
+  '<span><span class="rv">'+esc(v)+'</span>'+(u?'<span class="ru">'+esc(u)+'</span>':'')+'</span></div>';}
+function gRowStatus(k,v,c){return '<div class="row"><span class="rk">'+esc(k)+'</span>'+
+  '<span class="rv" style="color:'+c+'">'+esc(v)+'</span></div>';}
+function geigerCard(s){
+  var usv=+s.usv_per_h,cpm=+s.cpm;
+  var frac=Math.max(Math.min(usv/G_SCALE_MAX,1),0);
+  var danger=s.status==='DANGER'&&(s.alarm===1||s.alarm===true);
+  var col=gStatusColor(s.status);
+  var hasTrace=Array.isArray(s.trace)&&s.trace.length>0;
+  var detail=
+    gRow('Total counts',(+s.total_counts).toLocaleString('en-US'))+
+    gRow('Cumulative dose',(+s.dose_uSv).toFixed(2),'µSv')+
+    gRow('Tube factor',Math.round(+s.tube_factor),'CPM/µSv·h')+
+    gRow('Signal pin','GPIO'+s.pin)+
+    gRowStatus('Status',s.status,col);
+  var spark=hasTrace
+    ? '<div class="g-spark-wrap"><canvas class="g-spark" data-trace=\''+
+        esc(JSON.stringify(s.trace))+'\' data-factor="'+(+s.tube_factor)+'"></canvas>'+
+        '<div class="g-spark-cap"><span>counts/sec · last '+(s.trace_secs||s.trace.length)+' s</span>'+
+        '<span>– – alarm</span></div></div>'
+    : '';
+  return '<div class="card geiger'+(danger?' alarming':'')+'" data-slug="geiger">'+
+    '<div class="card-head" title="Open /api/geiger">'+
+      '<div class="dot on"></div><h2>'+esc(s.name||'Geiger Counter')+'</h2>'+
+      '<span class="alarm-tag">⚠ ALARM</span>'+
+      '<span class="mount-tag">PIN</span>'+
+      '<span class="bus-tag">GPIO</span>'+
+    '</div>'+
+    '<div class="card-body">'+
+      '<div class="g-hero">'+
+        '<span class="g-big" style="color:'+col+'">'+usv.toFixed(2)+'</span>'+
+        '<span class="g-unit">µSv/h</span>'+
+        '<span class="g-sec"><span class="v">'+cpm.toLocaleString('en-US')+'</span>'+
+          '<span class="u">CPM</span></span>'+
+      '</div>'+
+      '<div class="g-statuswrap">'+
+        '<span class="g-status" style="color:'+col+'">'+esc(s.status)+'</span>'+
+        (s.settling?'<span class="g-settling">settling… 60 s</span>':'')+
+      '</div>'+
+      '<div class="g-bar"><div class="g-mark" style="left:'+(frac*100).toFixed(1)+'%"></div></div>'+
+      '<div class="g-scale"><span>0</span><span>1</span><span>5</span><span>6+ µSv/h</span></div>'+
+      spark+
+      '<div class="g-detail">'+detail+'</div>'+
+    '</div></div>';
+}
+function drawSparks(){
+  document.querySelectorAll('.g-spark').forEach(function(cv){
+    var trace;try{trace=JSON.parse(cv.dataset.trace);}catch(e){return;}
+    var factor=+cv.dataset.factor||154;
+    var dpr=window.devicePixelRatio||1;
+    cv.width=cv.clientWidth*dpr;cv.height=cv.clientHeight*dpr;
+    var ctx=cv.getContext('2d'),w=cv.width,h=cv.height;
+    ctx.clearRect(0,0,w,h);
+    var peak=Math.max.apply(null,trace);
+    var thrCps=5.0*factor/60;                 // alarm 5 µSv/h → counts/sec
+    var scaleMax=Math.max(peak,thrCps)*1.15||1;
+    var pad=4*dpr;
+    function Y(v){return h-pad-(v/scaleMax)*(h-2*pad);}
+    function X(i){return (i/(trace.length-1))*w;}
+    var accent=getComputedStyle(document.body).getPropertyValue('--accent').trim();
+    var red=getComputedStyle(document.body).getPropertyValue('--red').trim();
+    ctx.strokeStyle=red;ctx.globalAlpha=.6;ctx.lineWidth=1*dpr;
+    ctx.setLineDash([4*dpr,4*dpr]);ctx.beginPath();
+    ctx.moveTo(0,Y(thrCps));ctx.lineTo(w,Y(thrCps));ctx.stroke();
+    ctx.setLineDash([]);ctx.globalAlpha=1;
+    ctx.beginPath();ctx.moveTo(0,h);
+    trace.forEach(function(v,i){ctx.lineTo(X(i),Y(v));});
+    ctx.lineTo(w,h);ctx.closePath();
+    ctx.fillStyle=accent;ctx.globalAlpha=.13;ctx.fill();ctx.globalAlpha=1;
+    ctx.beginPath();
+    trace.forEach(function(v,i){i?ctx.lineTo(X(i),Y(v)):ctx.moveTo(X(i),Y(v));});
+    ctx.strokeStyle=accent;ctx.lineWidth=1.8*dpr;ctx.stroke();
+  });
+}
+
 // ── main poll ───────────────────────────────────────────────
 var ctrlSig=null;
 async function refresh(){
@@ -562,7 +675,17 @@ async function refresh(){
       sg.innerHTML='<p class="empty-note">No read-only sensors bound.</p>';
     }else{
       sg.innerHTML='';
-      sensors.forEach(function(s){sg.appendChild(buildSensorCard(s));});
+      sensors.forEach(function(s){
+        if(s.slug==='geiger'){
+          // Special-cased look; data still comes straight from toJson.
+          var t=document.createElement('div');
+          t.innerHTML=geigerCard(Object.assign({name:s.name,slug:s.slug},s.readings||{}));
+          if(t.firstElementChild)sg.appendChild(t.firstElementChild);
+        }else{
+          sg.appendChild(buildSensorCard(s));
+        }
+      });
+      drawSparks();
     }
     document.getElementById('sensor-count').textContent=sensors.length;
 
