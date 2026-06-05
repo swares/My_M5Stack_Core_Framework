@@ -250,12 +250,17 @@ void AlertManager::_route(const Rule& r, EventType type, float v) {
     _fw->mqtt.publishAlert(json);
   }
 
-  // SD — one CSV row to /alerts.csv.
+  // SD — one CSV row to /alerts.csv:
+  //   datetime,uptime_ms,type,sev,slug,key,value
+  // datetime is ISO-8601 wall-clock (NTP- or RTC-sourced) or blank when
+  // the clock isn't set — matching the sensor log's leading columns.
   if (r.channels & CH_SD) {
-    char row[112];
-    snprintf(row, sizeof(row), "%lu,%s,%s,%s,%s,%.3f",
-             static_cast<unsigned long>(millis()), TYT[type], SVT[r.severity],
-             r.slug, r.key, v);
+    char iso[24];
+    _fw->nowIso8601(iso, sizeof(iso));   // writes "" when no wall-clock
+    char row[140];
+    snprintf(row, sizeof(row), "%s,%lu,%s,%s,%s,%s,%.3f",
+             iso, static_cast<unsigned long>(millis()), TYT[type],
+             SVT[r.severity], r.slug, r.key, v);
     _fw->sdlog.logAlert(row);
   }
   // LoRa P2P — transmit on state edges only (raise/clear), not every
