@@ -61,8 +61,16 @@ class DisplayManager {
   enum class View : uint8_t { Detail, Overview };
   View _view = View::Detail;
   uint8_t _focusIdx = 0;      // index among read-only sensors
-  bool _dirty = true;         // detail view needs an immediate redraw
-  uint32_t _detailDrawn = 0;  // millis() of the last detail render
+  bool _dirty = true;          // view needs an immediate redraw
+  uint32_t _detailDrawn = 0;   // millis() of the last detail render
+  uint32_t _overviewDrawn = 0; // millis() of the last overview render
+
+  // Overview repaint cadence.  The scrolling ticker only needs a new
+  // frame at roughly its scroll step (~30 FPS); repainting every loop
+  // iteration just hammers the LCD/SD-shared SPI bus for no visible
+  // gain.  The fixed grid changes only when readings refresh, so it
+  // throttles to POLL_MS instead (see update()).
+  static constexpr uint32_t OVERVIEW_FRAME_MS = 33;
 
   // Scroll ticker state
   int32_t _scrollX = 0;

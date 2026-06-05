@@ -32,6 +32,7 @@ import os
 import sys
 import time
 import ipaddress
+import threading
 from dataclasses import dataclass, field
 
 import requests
@@ -48,6 +49,8 @@ CORE_IDLE_S   = 60                       # give up on a Module LLM reply after t
 CLAUDE_BIN    = "claude"                 # the Claude Code CLI
 WORKDIR       = "/srv/acme-api"          # repo Claude Code operates in
 CLAUDE_TIMEOUT = 1800                    # hard ceiling on one escalation (s)
+MAX_CONCURRENT_AGENTS = 2                # cap simultaneous Claude Code subprocesses
+AGENT_ACQUIRE_TIMEOUT = 5                # s to wait for a free slot before "busy"
 
 # ── Direct Claude API: the "preferred" 3rd route ──────────────────────
 #  In the key-stays-on-the-Pi architecture the ORCHESTRATOR owns all
@@ -105,6 +108,7 @@ TRUST_FORWARDED = False     # True ONLY behind a trusted reverse proxy
                             # (then the client IP is read from X-Forwarded-For)
 SERVE_HOST   = "0.0.0.0"    # bind address for `--serve`
 SERVE_PORT   = 8080
+MAX_POST_BYTES = 64 * 1024  # reject a `--serve` request body larger than this
 # Optional shared secret: if set, a request must carry
 #   Authorization: Bearer <token>   (match the firmware's ROUTER_BEARER).
 SERVE_BEARER = os.environ.get("ROUTER_BEARER", "")
@@ -115,6 +119,13 @@ SERVE_BEARER = os.environ.get("ROUTER_BEARER", "")
 #     -keyout pi.key -out pi.crt -subj "/CN=pi.local"
 SERVE_TLS_CERT = ""
 SERVE_TLS_KEY  = ""
+# Fail-closed guard: `--serve` exposes an endpoint that can run Claude Code
+# with shell + filesystem access, so it REFUSES TO START unless at least one
+# real access control is set — a bearer token (SERVE_BEARER) and/or a source-IP
+# allowlist (CLIENT_ALLOWLIST).  (HOST_ALLOWLIST is only a DNS-rebinding guard
+# and does NOT count.)  If you genuinely want an open endpoint — e.g. it is
+# already firewalled to localhost or a trusted LAN — set this true to override.
+SERVE_ALLOW_INSECURE = False
 
 
 # ----------------------------------------------------------------------
@@ -163,16 +174,45 @@ def build_brief(goal: str, summary: str, workdir: str) -> str:
     return "\n".join(parts)
 
 
+# Cap how many Claude Code subprocesses can run at once.  ThreadingHTTPServer
+# would otherwise spawn one agent per concurrent escalation and exhaust the Pi.
+_AGENT_SEM = threading.BoundedSemaphore(MAX_CONCURRENT_AGENTS)
+
+
+def _kill(proc, flag):
+    """Watchdog target: flag the timeout and kill the process."""
+    flag.set()
+    try:
+        proc.kill()
+    except Exception:
+        pass
+
+
 def run_claude(brief: str, workdir=WORKDIR):
     """Yield (kind, text) events from Claude Code as it works.
 
     kind is 'progress' (a paraphrasable tool step) or 'final' (assistant
     text). Parses --output-format stream-json; falls back to raw lines.
+
+    Concurrency is capped by _AGENT_SEM (returns a 'busy' note rather than
+    pile up agents), and a watchdog kills the process at CLAUDE_TIMEOUT so a
+    stalled agent — one that keeps stdout open but stops emitting — can't pin
+    the reading thread forever (the old proc.wait() timeout only applied
+    AFTER stdout reached EOF, which a hung child never does).
     """
-    proc = subprocess.Popen(
-        [CLAUDE_BIN, "-p", brief, "--output-format", "stream-json", "--verbose"],
-        cwd=workdir, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    if not _AGENT_SEM.acquire(timeout=AGENT_ACQUIRE_TIMEOUT):
+        yield ("final", "[orchestrator busy — too many concurrent agents, retry shortly]")
+        return
+    proc = None
+    timed_out = threading.Event()
+    watchdog = None
     try:
+        proc = subprocess.Popen(
+            [CLAUDE_BIN, "-p", brief, "--output-format", "stream-json", "--verbose"],
+            cwd=workdir, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        watchdog = threading.Timer(CLAUDE_TIMEOUT, _kill, args=(proc, timed_out))
+        watchdog.daemon = True
+        watchdog.start()
         for line in proc.stdout:
             line = line.strip()
             if not line:
@@ -191,15 +231,24 @@ def run_claude(brief: str, workdir=WORKDIR):
                 txt = ev.get("text") or ev.get("content") or ""
                 if txt:
                     yield ("final", txt)
-        proc.wait(timeout=CLAUDE_TIMEOUT)
-    except subprocess.TimeoutExpired:
-        proc.kill()
-        yield ("final", "[claude timed out]")
+        if timed_out.is_set():
+            yield ("final", "[claude timed out]")
     finally:
-        if proc.stderr:
-            err = proc.stderr.read().strip()
-            if err and proc.returncode not in (0, None):
-                yield ("final", f"[claude error] {err}")
+        if watchdog:
+            watchdog.cancel()
+        if proc:
+            try:
+                proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                try:
+                    proc.kill()
+                except Exception:
+                    pass
+            if proc.stderr:
+                err = proc.stderr.read().strip()
+                if err and proc.returncode not in (0, None) and not timed_out.is_set():
+                    yield ("final", f"[claude error] {err}")
+        _AGENT_SEM.release()
 
 
 # ----------------------------------------------------------------------
@@ -357,7 +406,23 @@ def serve_http(host: str = SERVE_HOST, port: int = SERVE_PORT) -> int:
     import ssl
     from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-    orch = Orchestrator()
+    # Fail-closed: this endpoint can drive Claude Code (shell + filesystem),
+    # so refuse to start wide open.  A bearer token or a source-IP allowlist
+    # counts as access control; the Host allowlist (rebinding guard) does not.
+    if not (SERVE_BEARER or CLIENT_ALLOWLIST or SERVE_ALLOW_INSECURE):
+        print(
+            "[serve] REFUSING TO START: no access control configured.\n"
+            "        This endpoint can run Claude Code with shell + filesystem\n"
+            "        access. Set SERVE_BEARER (or $ROUTER_BEARER) and/or\n"
+            "        CLIENT_ALLOWLIST. To override (e.g. already firewalled to\n"
+            "        localhost/LAN), set SERVE_ALLOW_INSECURE = True.")
+        return 2
+
+    # NOTE: each request gets its OWN Orchestrator (created in do_POST).
+    # ThreadingHTTPServer dispatches requests on separate threads, so a
+    # single shared instance would race on its `history` list and bleed
+    # context between unrelated clients.  Per-request state is correct here
+    # — the device's escalation brief already carries its own context.
 
     class Handler(BaseHTTPRequestHandler):
         protocol_version = "HTTP/1.1"
@@ -406,7 +471,17 @@ def serve_http(host: str = SERVE_HOST, port: int = SERVE_PORT) -> int:
         def do_POST(self):
             if not self._guard():
                 return
-            n = int(self.headers.get("Content-Length", 0) or 0)
+            # Guard the length header (a non-numeric value would otherwise
+            # raise) and clamp the body so a huge/absent-EOF request can't
+            # exhaust memory.
+            try:
+                n = int(self.headers.get("Content-Length", 0) or 0)
+            except ValueError:
+                return self._json(400, {"error": "bad content-length"})
+            if n < 0:
+                return self._json(400, {"error": "bad content-length"})
+            if n > MAX_POST_BYTES:
+                return self._json(413, {"error": "payload too large"})
             raw = self.rfile.read(n).decode("utf-8", "replace") if n else ""
             prompt = raw
             try:
@@ -424,6 +499,8 @@ def serve_http(host: str = SERVE_HOST, port: int = SERVE_PORT) -> int:
             self.send_header("Connection", "close")
             self.end_headers()
             print(f"[serve] {self._client()} -> {prompt[:60]!r}")
+            # Per-request Orchestrator — no shared mutable state across threads.
+            orch = Orchestrator()
             try:
                 for kind, text in orch.handle(prompt):
                     if kind == "route":

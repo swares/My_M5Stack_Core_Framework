@@ -24,16 +24,25 @@ class Plugin_TVOC : public IDevice {
     return true;
   }
 
+  // Non-blocking measure/read split.  measure_air_quality needs ~12 ms
+  // before the result can be read; instead of blocking the loop with
+  // delay(12) each poll, read the PREVIOUS poll's measurement (issued a
+  // full POLL_MS ago, so it's ready) and then start a fresh one for the
+  // next poll.  The SGP30 keeps its once-per-poll measurement cadence;
+  // the reading is just one poll old.
   void update() override {
-    _cmd(0x2008);  // measure_air_quality
-    delay(12);
-    if (bus->requestFrom(static_cast<int>(addr), 6) != 6)
-      return;
-    uint8_t d[6];
-    for (auto& x : d)
-      x = bus->read();
-    _eco2 = static_cast<uint16_t>((d[0] << 8) | d[1]);
-    _tvoc = static_cast<uint16_t>((d[3] << 8) | d[4]);
+    if (_pending) {
+      if (bus->requestFrom(static_cast<int>(addr), 6) == 6) {
+        uint8_t d[6];
+        for (auto& x : d)
+          x = bus->read();
+        _eco2 = static_cast<uint16_t>((d[0] << 8) | d[1]);
+        _tvoc = static_cast<uint16_t>((d[3] << 8) | d[4]);
+      }
+      _pending = false;
+    }
+    _cmd(0x2008);  // measure_air_quality — result read on the next poll
+    _pending = true;
   }
 
   void toJson(JsonObject& o) const override {
@@ -51,6 +60,7 @@ class Plugin_TVOC : public IDevice {
 
  private:
   uint16_t _eco2 = 400, _tvoc = 0;
+  bool _pending = false;  // a measure cmd is awaiting its read next poll
 
   void _cmd(uint16_t c) {
     bus->beginTransmission(addr);

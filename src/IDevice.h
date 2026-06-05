@@ -6,6 +6,7 @@
 #include <Arduino.h>
 #include <Wire.h>
 #include <ArduinoJson.h>
+#include "CmdParse.h"   // cmd:: command-parameter validators (shared by plugins)
 
 // Which physical bus(es) a plugin may appear on.
 //   Internal = Wire  – built-in chips on the host board

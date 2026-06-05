@@ -73,15 +73,12 @@ class WebAPI {
   // can be (re)entered.
   bool _setupMode();
   void _route_all();
-  void _route_plugin();
-  void _route_control(const String& slug);
   void _route_scan();
   void _route_config();
   void _route_mqtt();
   void _route_alerts();   // GET /api/alerts — alarm engine state + ring
   void _route_sdcard();
   void _route_endpoints();
-  void _route_404();
 
   // Registers the full dashboard + REST API on a PLAIN-HTTP server for
   // provisioned standalone-AP mode (WEB_AP_PLAIN_HTTP).  Templated on
@@ -99,6 +96,30 @@ class WebAPI {
   // /api/sdcard and /api/sdcard/flush.  Same single-source-of-truth
   // pattern as _buildMqttStatus.
   void _buildSdStatus(JsonDocument& doc);
+
+  // ── Shared dynamic-route dispatch (one source of truth) ───────
+  //  The alerts-rules routes, the control /set endpoint, plugin reads,
+  //  the settings save, and the JSON 404 used to be hand-copied across
+  //  the HTTPS onNotFound and the plain-HTTP standalone-AP onNotFound.
+  //  These templated members hold that logic ONCE; both servers call
+  //  them.  Templated on the server type so the same body serves
+  //  ESPWebServerSecure and ESPWebServer (the serveSetupSubmit<Srv> /
+  //  _wirePlainAp<Srv> pattern).  The CALLER is responsible for auth
+  //  before invoking these; `path` is the request path, query stripped.
+  template <class Srv> void _routeDynamic(Srv* s, const String& path);
+  // CSRF / safe-method guard for state-changing routes: returns true
+  // (and sends the rejection) when WEB_CSRF_PROTECT is on and the request
+  // is not a POST carrying the X-Requested-With header.  Shared by the
+  // control endpoint and the settings/alerts mutations.
+  template <class Srv> bool _csrfBlocked(Srv* s);
+  // Control a device: POST/GET /api/<slug>/set.  Validates + applies
+  // each param through the plugin's command(), echoes the result.
+  template <class Srv> void _doControl(Srv* s, const String& slug);
+  // POST /api/settings/save — merge supplied credentials, reply, reboot.
+  template <class Srv> void _doSettingsSave(Srv* s);
+  // Fill `doc` with the non-secret settings snapshot (SSID, usernames,
+  // set/unset flags) shared by every /api/settings responder.
+  void _buildSettingsDoc(JsonDocument& doc);
 
   // Returns true iff the current request should be served.  When
   // WEB_AUTH_USER is empty this is unconditionally true.  Otherwise

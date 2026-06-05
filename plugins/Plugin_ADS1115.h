@@ -22,6 +22,7 @@
 //  as a quick engineering value — set SCALE to your unit's ratio.
 // ============================================================
 #include "../src/IDevice.h"
+#include "../src/Config.h"  // POLL_MS — sweep cadence for the fastPoll state machine
 
 class Plugin_ADS1115 : public IDevice {
  public:
@@ -54,10 +55,43 @@ class Plugin_ADS1115 : public IDevice {
     return bus->endTransmission() == 0;
   }
 
-  void update() override {
-    for (uint8_t ch = 0; ch < CHANNELS; ch++)
-      _v[ch] = _readChannel(ch);
+  // Conversions are non-blocking.  The ADS1115 needs ~8 ms per single-
+  // shot conversion; doing all four channels in update() meant blocking
+  // the cooperative loop for ~4×9 ms every poll.  Instead a small state
+  // machine in fastPoll() starts ONE channel's conversion, waits out the
+  // ~9 ms WITHOUT blocking (it just returns and is re-entered next loop),
+  // reads it, then steps to the next channel.  A full 4-channel sweep
+  // completes in a few tens of ms of wall-clock and repeats every
+  // POLL_MS, so the data rate matches the old code with zero loop stall.
+  bool wantsFastPoll() const override { return true; }
+
+  void fastPoll() override {
+    uint32_t now = millis();
+    switch (_st) {
+      case IDLE:
+        // Begin a fresh sweep once a poll interval has elapsed.
+        if (now - _lastSweep >= POLL_MS) {
+          _ch = 0;
+          _st = START;
+        }
+        return;
+      case START:
+        if (_startConv(_ch)) {
+          _convAt = now;
+          _st = WAIT;
+        } else {
+          _nextChannel(now);  // bus error — keep prior value, move on
+        }
+        return;
+      case WAIT:
+        if (now - _convAt < CONV_MS) return;  // conversion still running
+        _v[_ch] = _readConv(_ch);
+        _nextChannel(now);
+        return;
+    }
   }
+
+  void update() override {}  // all work happens in fastPoll()
 
   void toJson(JsonObject& o) const override {
     for (uint8_t ch = 0; ch < CHANNELS; ch++)
@@ -75,9 +109,27 @@ class Plugin_ADS1115 : public IDevice {
  private:
   float _v[CHANNELS] = {0};
 
-  // Single-shot read of one single-ended channel -> volts.  On any
-  // bus error the channel's previous value is kept.
-  float _readChannel(uint8_t ch) {
+  // ── Non-blocking conversion state machine (see fastPoll) ──────
+  enum St : uint8_t { IDLE = 0, START, WAIT };
+  St       _st = IDLE;
+  uint8_t  _ch = 0;          // channel currently being swept
+  uint32_t _convAt = 0;      // millis() the active conversion was started
+  uint32_t _lastSweep = 0;   // millis() the last full sweep finished
+  static constexpr uint32_t CONV_MS = 9;  // 128 SPS -> ~8 ms convert + margin
+
+  // Advance to the next channel, or finish the sweep.
+  void _nextChannel(uint32_t now) {
+    if (++_ch >= CHANNELS) {
+      _lastSweep = now;
+      _st = IDLE;
+    } else {
+      _st = START;  // START is serviced on the next fastPoll() entry
+    }
+  }
+
+  // Kick off a single-shot conversion on one single-ended channel.
+  // Returns false (so the caller skips the channel) on a bus error.
+  bool _startConv(uint8_t ch) {
     // config: OS=1 | MUX=100+ch (single-ended) | PGA=001 (+/-4.096V)
     //         | MODE=1 (single-shot) | DR=100 (128 SPS) | comp off
     uint16_t cfg = 0x8000 | (static_cast<uint16_t>(0x04 | ch) << 12) |
@@ -86,9 +138,12 @@ class Plugin_ADS1115 : public IDevice {
     bus->write(REG_CONFIG);
     bus->write(static_cast<uint8_t>(cfg >> 8));
     bus->write(static_cast<uint8_t>(cfg & 0xFF));
-    if (bus->endTransmission() != 0)
-      return _v[ch];
-    delay(9);  // 128 SPS -> ~8 ms convert
+    return bus->endTransmission() == 0;
+  }
+
+  // Read the finished conversion -> volts.  On any bus error the
+  // channel's previous value is kept.
+  float _readConv(uint8_t ch) {
     bus->beginTransmission(addr);
     bus->write(REG_CONV);
     if (bus->endTransmission(false) != 0)

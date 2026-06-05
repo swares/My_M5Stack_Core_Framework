@@ -54,6 +54,7 @@
 // ============================================================
 #include "../src/IPinDevice.h"
 #include "../src/Config.h"     // ROUTER_* settings
+#include "../src/HttpSse.h"    // header-skip + chunked de-framing for the SSE body
 #include <WiFiClientSecure.h>   // pulls in WiFi.h
 #include <ArduinoJson.h>
 
@@ -208,10 +209,10 @@ class NetDevice_Router : public IPinDevice {
   IDevice*          _localLlm;
   IDevice*          _directApi;
   WiFiClientSecure  _client;
-  String            _prompt, _answer, _rxbuf;
+  HttpSseReader     _http;   // skips headers + de-frames chunked encoding
+  String            _prompt, _answer;
   Route             _route = NONE;
   bool              _busy = false, _done = false, _timedOut = false;
-  bool              _headersDone = false;
   uint32_t          _lastRxMs = 0;
   uint32_t          _escalations = 0;
 
@@ -462,6 +463,14 @@ class NetDevice_Router : public IPinDevice {
       _finish(false);
       return false;
     }
+    // Don't even attempt a TLS handshake when the heap is already low —
+    // it would just fragment memory and fail (and could starve the
+    // dashboard's HTTPS server mid-handshake).
+    if (MIN_TLS_HEAP && ESP.getFreeHeap() < MIN_TLS_HEAP) {
+      _answer = "[low memory — escalation deferred, try again]";
+      _finish(false);
+      return false;
+    }
     // Opening the TLS socket can fail transiently if the dashboard's
     // HTTPS server is mid-handshake and heap is briefly fragmented.
     // Retry a few times with a doubling backoff before giving up.
@@ -508,8 +517,7 @@ class NetDevice_Router : public IPinDevice {
 
     _route = ESCALATED;
     _busy = true;
-    _headersDone = false;
-    _rxbuf = "";
+    _http.begin();
     _lastRxMs = millis();
     _escalations++;
     Serial.printf("[Router] escalated to Pi → %s%s\n", PI_HOST, PI_PATH);
@@ -517,33 +525,24 @@ class NetDevice_Router : public IPinDevice {
   }
 
   void _pumpEscalated() {
-    while (_client.available()) {
-      char c = _client.read();
-      if (c == '\r')
-        continue;
-      if (c == '\n') {
-        _consumeLine();
-        _rxbuf = "";
-      } else if (_rxbuf.length() < 2048) {
-        _rxbuf += c;
-      }
-    }
-    // Server closed the connection with nothing left to read → the
-    // stream is over even if no explicit [DONE] arrived.
-    if (!_client.connected() && !_client.available())
+    // The reader skips the HTTP headers and de-frames chunked transfer
+    // encoding, so each line is a clean SSE body line — a chunk boundary
+    // can no longer split a data: event mid-JSON.
+    _http.feed(_client);
+    String line;
+    while (_http.nextLine(line))
+      _consumeLine(line);
+    // The terminating chunk, or the server closing with nothing left to
+    // read, ends the stream even if no explicit [DONE] arrived.
+    if (_http.complete() ||
+        (!_client.connected() && !_client.available()))
       _finish(false);
   }
 
-  // One line of the SSE response.  Skip HTTP headers until the blank
-  // line, then parse  data: {...}  events.
-  void _consumeLine() {
-    String line = _rxbuf;
+  // One decoded SSE body line (headers + chunk framing already removed
+  // by HttpSseReader).  Parse  data: {...}  events.
+  void _consumeLine(String line) {
     line.trim();
-    if (!_headersDone) {
-      if (line.length() == 0)
-        _headersDone = true;
-      return;
-    }
     if (!line.startsWith("data:"))
       return;
     String payload = line.substring(5);
@@ -581,11 +580,10 @@ class NetDevice_Router : public IPinDevice {
     if (_directApi) _directApi->command("clear", "");
     _prompt = "";
     _answer = "";
-    _rxbuf = "";
+    _http.begin();
     _route = NONE;
     _busy = false;
     _done = false;
     _timedOut = false;
-    _headersDone = false;
   }
 };

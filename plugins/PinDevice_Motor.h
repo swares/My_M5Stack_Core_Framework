@@ -80,12 +80,6 @@ class PinDevice_Motor : public IPinDevice {
 
   // A decimal string in 0..100 -> that value; anything else fails.
   static bool _parsePct(const String& v, int32_t& out) {
-    if (v.length() == 0)
-      return false;
-    for (uint16_t i = 0; i < v.length(); i++)
-      if (!isDigit(v.charAt(i)))
-        return false;
-    out = v.toInt();
-    return (out >= 0 && out <= 100);
+    return cmd::parseInt(v, 0, 100, out);
   }
 };

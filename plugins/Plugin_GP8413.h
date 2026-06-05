@@ -122,21 +122,9 @@ class Plugin_GP8413 : public IDevice {
     return bus->endTransmission() == 0;
   }
 
-  // Parse a decimal voltage string in 0..VMAX (digits + one dot).
+  // Parse a decimal voltage string in 0..VMAX.  Thin adapter over the
+  // shared cmd:: validator (src/CmdParse.h).
   static bool _parseVolts(const String& v, float& out) {
-    if (v.length() == 0)
-      return false;
-    uint8_t dots = 0;
-    for (uint16_t i = 0; i < v.length(); i++) {
-      char c = v.charAt(i);
-      if (c == '.') {
-        if (++dots > 1)
-          return false;
-      } else if (!isDigit(c)) {
-        return false;
-      }
-    }
-    out = v.toFloat();
-    return (out >= 0.0f && out <= VMAX);
+    return cmd::parseFloat(v, 0.0f, VMAX, out);
   }
 };

@@ -118,6 +118,16 @@ void MQTTOut::update() {
 //  on successful connect we immediately publish "online" retained
 //  to the same topic, so subscribers always see the latest state.
 void MQTTOut::_tryConnect() {
+#if MQTT_TLS
+  // A TLS handshake allocates tens of KB; if the heap is already low,
+  // defer rather than fragment memory and fail.  update() retries on its
+  // next 5 s cycle.  (Plain MQTT/TCP is cheap, so it's not gated.)
+  if (MIN_TLS_HEAP && ESP.getFreeHeap() < MIN_TLS_HEAP) {
+    Serial.printf("[MQTT] low heap (%u B) — deferring TLS connect\n",
+                  (unsigned)ESP.getFreeHeap());
+    return;
+  }
+#endif
   _stats.connectAttempts++;
   Serial.printf("[MQTT] connecting to %s:%u ...", _host.c_str(), Settings::mqttPort());
 

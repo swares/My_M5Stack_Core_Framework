@@ -41,6 +41,7 @@
 #include "../src/IPinDevice.h"
 #include "../src/Config.h"     // CLAUDE_* settings
 #include "../src/Settings.h"   // runtime Claude API key (approach B)
+#include "../src/HttpSse.h"    // header-skip + chunked de-framing for the SSE body
 #include <WiFiClientSecure.h>
 #include <ArduinoJson.h>
 #include <vector>
@@ -99,18 +100,15 @@ class NetDevice_ClaudeAPI_History : public IPinDevice {
   void fastPoll() override {
     if (!_busy)
       return;
-    while (_client.available()) {
-      char c = _client.read();
-      if (c == '\r')
-        continue;
-      if (c == '\n') {
-        _consumeLine();
-        _line = "";
-      } else if (_line.length() < 2048) {
-        _line += c;
-      }
-    }
-    if (!_client.connected() && !_client.available())
+    // The reader skips the HTTP headers and de-frames chunked transfer
+    // encoding, so each line handed back is a clean SSE body line — a
+    // chunk boundary can no longer split a data: event mid-JSON.
+    _http.feed(_client);
+    String line;
+    while (_http.nextLine(line))
+      _consumeLine(line);
+    if (_http.complete() ||
+        (!_client.connected() && !_client.available()))
       _finish(false);
   }
 
@@ -176,10 +174,11 @@ class NetDevice_ClaudeAPI_History : public IPinDevice {
   struct Turn { String role; String text; };
 
   WiFiClientSecure  _client;
+  HttpSseReader     _http;        // skips headers + de-frames chunked encoding
   std::vector<Turn> _hist;        // the whole conversation so far
-  String _prompt, _answer, _line, _stopReason;
+  String _prompt, _answer, _stopReason;
   bool   _busy = false, _done = false, _timedOut = false;
-  bool   _headersDone = false, _awaiting = false;
+  bool   _awaiting = false;
   uint32_t _lastRxMs = 0, _queries = 0;
 
   // Drop oldest turns until within both budgets.  Remove in PAIRS so
@@ -205,6 +204,11 @@ class NetDevice_ClaudeAPI_History : public IPinDevice {
       _finish(false);
       return false;
     }
+    if (MIN_TLS_HEAP && ESP.getFreeHeap() < MIN_TLS_HEAP) {
+      _answer = "[low memory — try again]";
+      _finish(false);
+      return false;
+    }
     if (!_client.connect(HOST, PORT)) {
       _answer = "[cannot reach api.anthropic.com]";
       _finish(false);
@@ -218,8 +222,8 @@ class NetDevice_ClaudeAPI_History : public IPinDevice {
     _prompt = prompt;
     _answer = "";
     _stopReason = "";
-    _done = _timedOut = _headersDone = _awaiting = false;
-    _line = "";
+    _done = _timedOut = _awaiting = false;
+    _http.begin();
 
     // Build the Messages API body from the FULL history.
     JsonDocument doc;
@@ -260,14 +264,8 @@ class NetDevice_ClaudeAPI_History : public IPinDevice {
   //   message_delta       → capture stop_reason
   //   message_stop        → done
   //   error               → surface the message
-  void _consumeLine() {
-    String line = _line;
+  void _consumeLine(String line) {
     line.trim();
-    if (!_headersDone) {
-      if (line.length() == 0)
-        _headersDone = true;
-      return;
-    }
     if (!line.startsWith("data:"))
       return;
     String payload = line.substring(5);
@@ -325,8 +323,9 @@ class NetDevice_ClaudeAPI_History : public IPinDevice {
   void _reset() {
     _client.stop();
     _hist.clear();
-    _prompt = _answer = _line = _stopReason = "";
-    _busy = _done = _timedOut = _headersDone = _awaiting = false;
+    _prompt = _answer = _stopReason = "";
+    _busy = _done = _timedOut = _awaiting = false;
+    _http.begin();
     Serial.println(F("[Claude] history cleared — new conversation"));
   }
 };

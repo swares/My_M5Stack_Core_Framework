@@ -179,14 +179,7 @@ class Plugin_SERVO2 : public IDevice {
     int32_t ch = param.substring(plen).toInt();
     return (ch >= 0 && ch < CHANNELS) ? static_cast<int>(ch) : -1;
   }
-  static bool _allDigits(const String& v) {
-    if (v.length() == 0)
-      return false;
-    for (uint16_t i = 0; i < v.length(); i++)
-      if (!isDigit(v.charAt(i)))
-        return false;
-    return true;
-  }
+  static bool _allDigits(const String& v) { return cmd::allDigits(v); }
 
   // Write the four LEDn registers of one channel in a single
   // auto-incrementing transaction.

@@ -260,41 +260,9 @@ class Plugin_PPS : public IDevice {
     return u.v;
   }
 
-  // "1/on/true" → 1, "0/off/false" → 0, anything else → -1.
-  static int _parseBool(const String& v) {
-    String t = v;
-    t.toLowerCase();
-    if (t == "1" || t == "on" || t == "true")
-      return 1;
-    if (t == "0" || t == "off" || t == "false")
-      return 0;
-    return -1;
-  }
-  // Parse a decimal (optional sign, one optional '.') and verify it
-  // falls within [lo,hi].  Rejects any other character.
+  // Thin adapters over the shared cmd:: validators (src/CmdParse.h).
+  static int _parseBool(const String& v) { return cmd::parseBool(v); }
   static bool _parseFloat(const String& s, float lo, float hi, float& out) {
-    uint16_t len = s.length();
-    if (len == 0)
-      return false;
-    uint16_t i = 0;
-    if (s.charAt(0) == '-' || s.charAt(0) == '+')
-      i = 1;
-    bool dot = false, digit = false;
-    for (; i < len; i++) {
-      char ch = s.charAt(i);
-      if (ch == '.') {
-        if (dot)
-          return false;
-        dot = true;
-      } else if (isDigit(ch)) {
-        digit = true;
-      } else {
-        return false;
-      }
-    }
-    if (!digit)
-      return false;
-    out = s.toFloat();
-    return (out >= lo && out <= hi);
+    return cmd::parseFloat(s, lo, hi, out);
   }
 };

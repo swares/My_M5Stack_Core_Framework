@@ -92,6 +92,21 @@ class UartDevice_Modem : public IUartDevice {
     num.trim();
     String text = value.substring(comma + 1);
     if (num.length() == 0 || text.length() == 0) return false;
+    // ── Sanitize against AT-command injection ─────────────────
+    //  The number is embedded inside  AT+CMGS="<num>"  and the body is
+    //  sent verbatim before the Ctrl-Z terminator.  A CR/LF or a quote
+    //  in either could close the command early and inject a second AT
+    //  command, so the number is restricted to dialling characters and
+    //  any CR/LF is stripped from the body (a 0x1A in the body would
+    //  also end the message prematurely, so drop it too).
+    if (!_validNumber(num)) {
+      Serial.println(F("[Modem] SMS rejected — number must be + and digits"));
+      return false;
+    }
+    text.replace("\r", "");
+    text.replace("\n", " ");
+    text.replace("\x1A", "");
+    if (text.length() == 0) return false;  // nothing left after cleaning
     if (!_dailyCapOk()) {
       Serial.println(F("[Modem] SMS daily cap reached — dropping"));
       return false;
@@ -193,6 +208,18 @@ class UartDevice_Modem : public IUartDevice {
     }
     if (_smsWindowCount >= SMS_DAILY_MAX) return false;
     _smsWindowCount++;  // count the attempt (cost is per attempt)
+    return true;
+  }
+
+  // A dial string is a leading optional '+' followed by digits only —
+  // nothing that could break out of the AT+CMGS="..." quoting.
+  static bool _validNumber(const String& n) {
+    if (n.length() == 0 || n.length() > 20) return false;
+    for (uint16_t i = 0; i < n.length(); i++) {
+      char c = n.charAt(i);
+      if (i == 0 && c == '+') continue;
+      if (c < '0' || c > '9') return false;
+    }
     return true;
   }
 
