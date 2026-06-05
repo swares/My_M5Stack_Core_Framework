@@ -17,12 +17,7 @@ Runs as a terminal chat loop (this file) or import `Orchestrator` into a
 web/API front-end. Plain Python; only `requests` is third-party.
 
     pip install requests
-    python orchestrator.py            # interactive terminal chat
-    python orchestrator.py --serve    # inbound HTTP(S) service for the router
-
-Optional inbound access control (all default OFF) lives in the config
-block below: CLIENT_ALLOWLIST (source IP/CIDR), HOST_ALLOWLIST (Host
-header), and SERVE_BEARER (shared token).  See orchestrator_README.md.
+    python orchestrator.py
 """
 from __future__ import annotations
 import json
@@ -31,7 +26,6 @@ import subprocess
 import os
 import sys
 import time
-import ipaddress
 from dataclasses import dataclass, field
 
 import requests
@@ -79,42 +73,6 @@ DIRECT_MIN_WORDS = 12
 
 if not CORE_VERIFY:
     urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-
-# ----------------------------------------------------------------------
-#  Inbound access control  -  for when the orchestrator is EXPOSED as an
-#  HTTP service (the endpoint the M5Stack router escalates to).
-# ----------------------------------------------------------------------
-#  This box owns the Anthropic key AND runs Claude Code with filesystem +
-#  shell access, so lock down who can reach it.  Unlike the ESP32 side, a
-#  real Linux server sees the client's source IP, so this is a true
-#  source-IP allowlist.  Entries are single IPs or CIDR ranges; an EMPTY
-#  list disables the check (allow all).
-CLIENT_ALLOWLIST: list[str] = [
-    # "192.168.1.50",       # the CoreS3
-    # "192.168.1.0/24",     # the whole LAN
-]
-HOST_ALLOWLIST: list[str] = [
-    # "pi.local",
-    # "192.168.1.10",
-]
-# ^ Optional Host-header allowlist (parity with the firmware's
-#   WEB_HOST_ALLOWLIST).  When non-empty, a request is served only if its
-#   Host header (port stripped, case-insensitive) matches an entry.  Guards
-#   DNS-rebinding / access via an unexpected hostname.  []/empty = off.
-TRUST_FORWARDED = False     # True ONLY behind a trusted reverse proxy
-                            # (then the client IP is read from X-Forwarded-For)
-SERVE_HOST   = "0.0.0.0"    # bind address for `--serve`
-SERVE_PORT   = 8080
-# Optional shared secret: if set, a request must carry
-#   Authorization: Bearer <token>   (match the firmware's ROUTER_BEARER).
-SERVE_BEARER = os.environ.get("ROUTER_BEARER", "")
-# Optional TLS for `--serve`, so the firmware's WiFiClientSecure connects
-# directly (it skips cert validation when ROUTER_TLS_INSECURE=true).  Point
-# these at a cert/key pair, or leave "" for plain HTTP behind nginx/Caddy.
-#   openssl req -x509 -newkey rsa:2048 -nodes -days 3650 \
-#     -keyout pi.key -out pi.crt -subj "/CN=pi.local"
-SERVE_TLS_CERT = ""
-SERVE_TLS_KEY  = ""
 
 
 # ----------------------------------------------------------------------
@@ -313,156 +271,9 @@ class Orchestrator:
 
 
 # ----------------------------------------------------------------------
-#  Inbound HTTP(S) service  -  the endpoint the M5Stack router hits,
-#  gated by the IP allowlist (+ optional bearer).  Run with `--serve`.
-# ----------------------------------------------------------------------
-def ip_allowed(addr: str) -> bool:
-    """True if `addr` passes CLIENT_ALLOWLIST (empty list = allow all).
-    Lift this into your own Flask/aiohttp front-end if you have one and
-    reject the request when it returns False."""
-    if not CLIENT_ALLOWLIST:
-        return True
-    try:
-        ip = ipaddress.ip_address(addr)
-    except ValueError:
-        return False
-    for entry in CLIENT_ALLOWLIST:
-        try:
-            if ip in ipaddress.ip_network(entry, strict=False):
-                return True
-        except ValueError:
-            continue   # skip a malformed allowlist entry
-    return False
-
-
-def host_allowed(host: str) -> bool:
-    """True if the request Host (port stripped, case-insensitive) passes
-    HOST_ALLOWLIST.  Empty list = allow any Host.  Parity with the
-    firmware's _hostAllowed()."""
-    if not HOST_ALLOWLIST:
-        return True
-    host = (host or "").split(":")[0].strip().lower()
-    if not host:
-        return False
-    return any(host == h.strip().lower() for h in HOST_ALLOWLIST if h.strip())
-
-
-def serve_http(host: str = SERVE_HOST, port: int = SERVE_PORT) -> int:
-    """Expose the orchestrator over HTTP(S) for the M5Stack router.
-
-    POST a prompt (raw text, or JSON {"prompt": "..."}) and receive a
-    text/event-stream:  data: {"delta": "..."} ... data: {"finish": true}
-    then  data: [DONE]  - the exact shape NetDevice_Router parses.  Every
-    request is gated by the IP allowlist (+ optional bearer token)."""
-    import ssl
-    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-
-    orch = Orchestrator()
-
-    class Handler(BaseHTTPRequestHandler):
-        protocol_version = "HTTP/1.1"
-
-        def _client(self) -> str:
-            if TRUST_FORWARDED:
-                xff = self.headers.get("X-Forwarded-For", "")
-                if xff:
-                    return xff.split(",")[0].strip()
-            return self.client_address[0]
-
-        def _json(self, code: int, obj: dict):
-            body = json.dumps(obj).encode()
-            self.send_response(code)
-            self.send_header("Content-Type", "application/json")
-            self.send_header("Content-Length", str(len(body)))
-            self.send_header("Connection", "close")
-            self.end_headers()
-            self.wfile.write(body)
-
-        def _sse(self, obj: dict):
-            self.wfile.write(f"data: {json.dumps(obj)}\n\n".encode())
-            self.wfile.flush()
-
-        def _guard(self) -> bool:
-            client = self._client()
-            if not ip_allowed(client):
-                print(f"[serve] DENY {client} - ip not in allowlist")
-                self._json(403, {"error": "forbidden: ip not allowed"})
-                return False
-            if not host_allowed(self.headers.get("Host", "")):
-                print(f"[serve] DENY {client} - host not in allowlist")
-                self._json(403, {"error": "forbidden: host not allowed"})
-                return False
-            if SERVE_BEARER and self.headers.get("Authorization", "") != f"Bearer {SERVE_BEARER}":
-                print(f"[serve] DENY {client} - bad bearer")
-                self._json(401, {"error": "unauthorized"})
-                return False
-            return True
-
-        def do_GET(self):
-            if not self._guard():
-                return
-            self._json(200, {"ok": True, "service": "orchestrator"})
-
-        def do_POST(self):
-            if not self._guard():
-                return
-            n = int(self.headers.get("Content-Length", 0) or 0)
-            raw = self.rfile.read(n).decode("utf-8", "replace") if n else ""
-            prompt = raw
-            try:
-                obj = json.loads(raw)
-                prompt = obj.get("prompt") or obj.get("ask") or raw
-            except (json.JSONDecodeError, AttributeError):
-                pass
-            prompt = (prompt or "").strip()
-            if not prompt:
-                return self._json(400, {"error": "empty prompt"})
-
-            self.send_response(200)
-            self.send_header("Content-Type", "text/event-stream")
-            self.send_header("Cache-Control", "no-cache")
-            self.send_header("Connection", "close")
-            self.end_headers()
-            print(f"[serve] {self._client()} -> {prompt[:60]!r}")
-            try:
-                for kind, text in orch.handle(prompt):
-                    if kind == "route":
-                        self._sse({"route": text})
-                    elif kind == "final":
-                        self._sse({"delta": text})
-                    # 'progress' steps stay server-side (firmware ignores them)
-                self._sse({"finish": True})
-                self.wfile.write(b"data: [DONE]\n\n")
-                self.wfile.flush()
-            except (BrokenPipeError, ConnectionResetError):
-                pass   # client hung up mid-stream
-
-        def log_message(self, *a):
-            pass   # quiet default logging; we print our own lines
-
-    httpd = ThreadingHTTPServer((host, port), Handler)
-    tls = bool(SERVE_TLS_CERT and SERVE_TLS_KEY)
-    if tls:
-        ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-        ctx.load_cert_chain(SERVE_TLS_CERT, SERVE_TLS_KEY)
-        httpd.socket = ctx.wrap_socket(httpd.socket, server_side=True)
-    print(f"orchestrator service on {'https' if tls else 'http'}://{host}:{port}  "
-          f"(allowlist: {CLIENT_ALLOWLIST or 'OFF - all IPs'}; "
-          f"bearer: {'on' if SERVE_BEARER else 'off'})")
-    try:
-        httpd.serve_forever()
-    except KeyboardInterrupt:
-        print("\nbye")
-        httpd.shutdown()
-    return 0
-
-
-# ----------------------------------------------------------------------
 #  Terminal chat loop
 # ----------------------------------------------------------------------
 def main():
-    if "--serve" in sys.argv:
-        return serve_http()
     orch = Orchestrator()
     print(f"orchestrator -> core {CORE_URL} | claude workdir {WORKDIR}")
     api_state = "on" if (DIRECT_API_ENABLED and ANTHROPIC_API_KEY) else "off"
