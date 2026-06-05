@@ -181,42 +181,9 @@ class Plugin_GOPLUS2 : public IDevice {
   uint8_t _servo[2] = {0, 0};
   int16_t _enc[2] = {0, 0};
 
-  // Parse a signed decimal in [lo,hi].  Returns false (rejects)
-  // on any non-numeric character or out-of-range value.
+  // Thin adapters over the shared cmd:: validators (src/CmdParse.h).
   static bool _parseInt(const String& v, int32_t lo, int32_t hi, int32_t& out) {
-    if (v.length() == 0)
-      return false;
-    uint16_t i = 0;
-    if (v.charAt(0) == '-') {
-      if (v.length() == 1)
-        return false;
-      i = 1;
-    }
-    for (; i < v.length(); i++)
-      if (!isDigit(v.charAt(i)))
-        return false;
-    out = v.toInt();
-    return (out >= lo && out <= hi);
+    return cmd::parseInt(v, lo, hi, out);
   }
-  static int _hexNibble(char c) {
-    if (c >= '0' && c <= '9')
-      return c - '0';
-    if (c >= 'a' && c <= 'f')
-      return c - 'a' + 10;
-    if (c >= 'A' && c <= 'F')
-      return c - 'A' + 10;
-    return -1;
-  }
-  static int32_t _parseRgb(const String& v) {
-    if (v.length() != 6)
-      return -1;
-    int32_t out = 0;
-    for (uint8_t i = 0; i < 6; i++) {
-      int h = _hexNibble(v.charAt(i));
-      if (h < 0)
-        return -1;
-      out = (out << 4) | h;
-    }
-    return out;
-  }
+  static int32_t _parseRgb(const String& v) { return cmd::parseRgb(v); }
 };

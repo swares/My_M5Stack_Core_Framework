@@ -49,6 +49,7 @@
 #include "../src/IPinDevice.h"
 #include "../src/Config.h"     // CLAUDE_* settings
 #include "../src/Settings.h"   // runtime Claude API key (approach B)
+#include "../src/HttpSse.h"    // header-skip + chunked de-framing for the SSE body
 #include <WiFiClientSecure.h>
 #include <ArduinoJson.h>
 
@@ -99,18 +100,15 @@ class NetDevice_ClaudeAPI : public IPinDevice {
   void fastPoll() override {
     if (!_busy)
       return;
-    while (_client.available()) {
-      char c = _client.read();
-      if (c == '\r')
-        continue;
-      if (c == '\n') {
-        _consumeLine();
-        _line = "";
-      } else if (_line.length() < 2048) {
-        _line += c;
-      }
-    }
-    if (!_client.connected() && !_client.available())
+    // The reader skips the HTTP headers and de-frames chunked transfer
+    // encoding, so each line handed back is a clean SSE body line — a
+    // chunk boundary can no longer split a data: event mid-JSON.
+    _http.feed(_client);
+    String line;
+    while (_http.nextLine(line))
+      _consumeLine(line);
+    if (_http.complete() ||
+        (!_client.connected() && !_client.available()))
       _finish(false);
   }
 
@@ -170,13 +168,19 @@ class NetDevice_ClaudeAPI : public IPinDevice {
 
  private:
   WiFiClientSecure _client;
-  String _prompt, _answer, _line;
-  bool   _busy = false, _done = false, _timedOut = false, _headersDone = false;
+  HttpSseReader _http;   // skips headers + de-frames chunked encoding
+  String _prompt, _answer;
+  bool   _busy = false, _done = false, _timedOut = false;
   uint32_t _lastRxMs = 0, _queries = 0;
 
   bool _start(const String& prompt) {
     if (WiFi.status() != WL_CONNECTED) {
       _answer = "[offline]";
+      _finish(false);
+      return false;
+    }
+    if (MIN_TLS_HEAP && ESP.getFreeHeap() < MIN_TLS_HEAP) {
+      _answer = "[low memory — try again]";
       _finish(false);
       return false;
     }
@@ -187,8 +191,8 @@ class NetDevice_ClaudeAPI : public IPinDevice {
     }
     _prompt = prompt;
     _answer = "";
-    _done = _timedOut = _headersDone = false;
-    _line = "";
+    _done = _timedOut = false;
+    _http.begin();
 
     // Build the Messages API body with streaming enabled.
     JsonDocument doc;
@@ -221,17 +225,12 @@ class NetDevice_ClaudeAPI : public IPinDevice {
     return true;
   }
 
-  // One SSE line.  Skip HTTP headers until the blank line, then parse
+  // One decoded SSE body line (headers + chunk framing already removed
+  // by HttpSseReader).  Parse
   //   data: {"type":"content_block_delta","delta":{"text":"..."}}
   // and stop on message_stop.  Errors arrive as a JSON {"type":"error"}.
-  void _consumeLine() {
-    String line = _line;
+  void _consumeLine(String line) {
     line.trim();
-    if (!_headersDone) {
-      if (line.length() == 0)
-        _headersDone = true;
-      return;
-    }
     if (!line.startsWith("data:"))
       return;                       // skip "event:" lines and keep-alives
     String payload = line.substring(5);
@@ -267,7 +266,8 @@ class NetDevice_ClaudeAPI : public IPinDevice {
 
   void _reset() {
     _client.stop();
-    _prompt = _answer = _line = "";
-    _busy = _done = _timedOut = _headersDone = false;
+    _prompt = _answer = "";
+    _busy = _done = _timedOut = false;
+    _http.begin();
   }
 };

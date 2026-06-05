@@ -153,24 +153,11 @@ class Plugin_2RELAY : public IDevice {
     return true;
   }
 
-  // "1/on/true" -> 1, "0/off/false" -> 0, anything else -> -1.
-  static int _parseBool(const String& v) {
-    String t = v;
-    t.toLowerCase();
-    if (t == "1" || t == "on" || t == "true")
-      return 1;
-    if (t == "0" || t == "off" || t == "false")
-      return 0;
-    return -1;
-  }
+  // Thin adapters over the shared cmd:: validators (src/CmdParse.h).
+  static int _parseBool(const String& v) { return cmd::parseBool(v); }
   // Decimal 0..maxv -> that value, anything else -> -1.
   static int _parseBits(const String& v, int maxv) {
-    if (v.length() == 0)
-      return -1;
-    for (uint16_t i = 0; i < v.length(); i++)
-      if (!isDigit(v.charAt(i)))
-        return -1;
-    int32_t n = v.toInt();
-    return (n >= 0 && n <= maxv) ? static_cast<int>(n) : -1;
+    int32_t n;
+    return cmd::parseInt(v, 0, maxv, n) ? static_cast<int>(n) : -1;
   }
 };

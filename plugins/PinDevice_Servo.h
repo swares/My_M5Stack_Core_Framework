@@ -95,13 +95,8 @@ class PinDevice_Servo : public IPinDevice {
     ledcWrite(_pin, duty);
     _us = us;
   }
+  // Thin adapter over the shared cmd:: validator (src/CmdParse.h).
   static bool _parseInt(const String& v, int32_t lo, int32_t hi, int32_t& out) {
-    if (v.length() == 0)
-      return false;
-    for (uint16_t i = 0; i < v.length(); i++)
-      if (!isDigit(v.charAt(i)))
-        return false;
-    out = v.toInt();
-    return (out >= lo && out <= hi);
+    return cmd::parseInt(v, lo, hi, out);
   }
 };

@@ -140,22 +140,9 @@ class PinDevice_Buzzer : public IPinDevice {
     _playing = false;
   }
 
-  static int _parseBool(const String& v) {
-    String t = v;
-    t.toLowerCase();
-    if (t == "1" || t == "on" || t == "true")
-      return 1;
-    if (t == "0" || t == "off" || t == "false")
-      return 0;
-    return -1;
-  }
+  // Thin adapters over the shared cmd:: validators (src/CmdParse.h).
+  static int _parseBool(const String& v) { return cmd::parseBool(v); }
   static bool _parseInt(const String& v, int32_t lo, int32_t hi, int32_t& out) {
-    if (v.length() == 0)
-      return false;
-    for (uint16_t i = 0; i < v.length(); i++)
-      if (!isDigit(v.charAt(i)))
-        return false;
-    out = v.toInt();
-    return (out >= lo && out <= hi);
+    return cmd::parseInt(v, lo, hi, out);
   }
 };

@@ -182,14 +182,6 @@ class Plugin_HMI : public IDevice {
         (static_cast<uint32_t>(d[3]) << 24));
   }
 
-  // "1/on/true" -> 1, "0/off/false" -> 0, anything else -> -1.
-  static int _parseBool(const String& v) {
-    String t = v;
-    t.toLowerCase();
-    if (t == "1" || t == "on" || t == "true")
-      return 1;
-    if (t == "0" || t == "off" || t == "false")
-      return 0;
-    return -1;
-  }
+  // Thin adapter over the shared cmd:: validator (src/CmdParse.h).
+  static int _parseBool(const String& v) { return cmd::parseBool(v); }
 };

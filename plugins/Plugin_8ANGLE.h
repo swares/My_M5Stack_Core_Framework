@@ -119,26 +119,7 @@ class Plugin_8ANGLE : public IDevice {
     return bus->endTransmission() == 0;
   }
 
-  static int _hexNibble(char c) {
-    if (c >= '0' && c <= '9')
-      return c - '0';
-    if (c >= 'a' && c <= 'f')
-      return c - 'a' + 10;
-    if (c >= 'A' && c <= 'F')
-      return c - 'A' + 10;
-    return -1;
-  }
+  // Thin adapter over the shared cmd:: validator (src/CmdParse.h).
   // Exactly six hex digits → 0x000000-0xFFFFFF, else -1.
-  static int32_t _parseRgb(const String& v) {
-    if (v.length() != 6)
-      return -1;
-    int32_t out = 0;
-    for (uint8_t i = 0; i < 6; i++) {
-      int h = _hexNibble(v.charAt(i));
-      if (h < 0)
-        return -1;
-      out = (out << 4) | h;
-    }
-    return out;
-  }
+  static int32_t _parseRgb(const String& v) { return cmd::parseRgb(v); }
 };
