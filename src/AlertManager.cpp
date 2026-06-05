@@ -39,7 +39,9 @@ void AlertManager::_loadSeedRules() {
   Rule rad{};
   rad.id = 1;
   strncpy(rad.slug, "geiger", sizeof(rad.slug) - 1);
+  rad.slug[sizeof(rad.slug) - 1] = '\0';
   strncpy(rad.key,  "usv_per_h", sizeof(rad.key) - 1);
+  rad.key[sizeof(rad.key) - 1] = '\0';
   rad.kind = K_THRESHOLD;
   rad.op = OP_GE;
   rad.threshold = ALERT_RAD_USV;
@@ -55,10 +57,13 @@ void AlertManager::_loadSeedRules() {
   Rule lt{};
   lt.id = 2;
   strncpy(lt.slug, "lightning", sizeof(lt.slug) - 1);
+  lt.slug[sizeof(lt.slug) - 1] = '\0';
   strncpy(lt.key,  "strikes", sizeof(lt.key) - 1);
+  lt.key[sizeof(lt.key) - 1] = '\0';
   lt.kind = K_EVENT;
   lt.hasGate = true;
   strncpy(lt.gateKey, "distance_km", sizeof(lt.gateKey) - 1);
+  lt.gateKey[sizeof(lt.gateKey) - 1] = '\0';
   lt.gateOp = OP_LE;
   lt.gateVal = ALERT_LIGHTNING_KM;
   lt.severity = SEV_CRITICAL;
@@ -438,13 +443,16 @@ bool AlertManager::_ruleFromJson(JsonObjectConst o, Rule& r) {
   r.id            = o["id"]   | 0;
   r.enabled       = (o["en"]  | 1) != 0;
   strncpy(r.slug, o["slug"] | "", sizeof(r.slug) - 1);
+  r.slug[sizeof(r.slug) - 1] = '\0';
   strncpy(r.key,  o["key"]  | "", sizeof(r.key) - 1);
+  r.key[sizeof(r.key) - 1] = '\0';
   r.kind          = static_cast<Kind>(
       clampEnum(o["kind"] | 0, K_EVENT, K_THRESHOLD));
   r.op            = static_cast<Op>(clampEnum(o["op"] | 0, OP_LT, OP_GE));
   r.threshold     = o["thr"]  | 0.0f;
   r.hasGate       = (o["gate"] | 0) != 0;
   strncpy(r.gateKey, o["gk"] | "", sizeof(r.gateKey) - 1);
+  r.gateKey[sizeof(r.gateKey) - 1] = '\0';
   r.gateOp        = static_cast<Op>(clampEnum(o["gop"] | 1, OP_LT, OP_LE));
   r.gateVal       = o["gv"]   | 0.0f;
   r.severity      = static_cast<Severity>(
