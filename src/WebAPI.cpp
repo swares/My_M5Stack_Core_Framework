@@ -699,6 +699,7 @@ void WebAPI::_route_all() {
   bool synced = _fw->nowIso8601(ts, sizeof(ts));
   doc["datetime"]     = ts;
   doc["time_synced"]  = synced;
+  doc["time_source"]  = _fw->timeSource();   // "ntp" | "rtc" | "none"
 
   // Board identity
   const auto& bi = _fw->board();
@@ -1254,6 +1255,7 @@ void WebAPI::_wirePlainAp(Srv* s) {
     bool synced = _fw->nowIso8601(ts, sizeof(ts));
     doc["datetime"]    = ts;
     doc["time_synced"] = synced;
+    doc["time_source"] = _fw->timeSource();   // "ntp" | "rtc" | "none"
     const auto& bi = _fw->board();
     JsonObject bobj = doc["board"].to<JsonObject>();
     bobj["short_name"] = bi.shortName;

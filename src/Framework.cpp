@@ -6,6 +6,8 @@
 #include "Security.h"     // config-hygiene helpers (default-cred guard, AP pw)
 #include "Settings.h"     // runtime NVS settings (WiFi + dashboard login)
 #include <cstdio>         // snprintf
+#include <ctime>          // mktime / strftime (RTC fallback)
+#include <sys/time.h>     // settimeofday (RTC fallback)
 
 Framework::Framework() = default;
 Framework::~Framework() { for (auto* p : _plugins) delete p; }
@@ -490,7 +492,16 @@ void Framework::_syncTime() {
   while (!getLocalTime(&tm, 100)) {
     if (millis() - t > NTP_TIMEOUT_MS) {
       Serial.println(F(" timeout (no NTP)"));
-      _timeSynced = false;
+      // No NTP — fall back to the battery-backed hardware RTC if it
+      // holds a real (previously-synced) time.  configTzTime() above
+      // already set the POSIX TZ, so mktime() in the helper interprets
+      // the RTC's stored local wall-clock correctly.
+      if (RTC_TIME_FALLBACK && _seedTimeFromRtc()) {
+        _timeSynced  = true;
+        _timeFromRtc = true;
+      } else {
+        _timeSynced = false;
+      }
       return;
     }
     Serial.print('.');
@@ -499,7 +510,8 @@ void Framework::_syncTime() {
   char buf[32];
   strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M:%S", &tm);
   Serial.printf(" %s\n", buf);
-  _timeSynced = true;
+  _timeSynced  = true;
+  _timeFromRtc = false;   // came from NTP
 
   // Push the freshly-synced wall-clock into the board's hardware
   // RTC (BM8563 on Core2 / CoreS3 / Tough).  Without this the
@@ -514,6 +526,40 @@ void Framework::_syncTime() {
     M5.Rtc.setDateTime(&tm);
     Serial.println(F("[Time] hardware RTC set from NTP"));
   }
+}
+
+// ── _seedTimeFromRtc ──────────────────────────────────────────
+//  Offline-boot fallback: if the board has a battery-backed RTC
+//  (BM8563 on Core2 / CoreS3 / Tough) holding a plausible time —
+//  i.e. it was set from NTP on an earlier online boot — copy it into
+//  the ESP32 system clock so getLocalTime() / nowIso8601() return
+//  real wall-clock without any network.  Returns false on boards with
+//  no RTC (Core1) or when the RTC was never set (implausible year).
+//  configTzTime() in _syncTime() has already applied the POSIX TZ, so
+//  mktime() below correctly treats the RTC's stored local time as local.
+bool Framework::_seedTimeFromRtc() {
+  if (!M5.Rtc.isEnabled()) return false;
+  auto dt = M5.Rtc.getDateTime();
+  if (dt.date.year < 2024) return false;   // never set / not real time
+
+  struct tm tm = {};
+  tm.tm_year  = dt.date.year - 1900;
+  tm.tm_mon   = dt.date.month - 1;
+  tm.tm_mday  = dt.date.date;
+  tm.tm_hour  = dt.time.hours;
+  tm.tm_min   = dt.time.minutes;
+  tm.tm_sec   = dt.time.seconds;
+  tm.tm_isdst = -1;                         // let mktime resolve DST via TZ
+
+  time_t epoch = mktime(&tm);
+  if (epoch <= 0) return false;
+  struct timeval tv = { epoch, 0 };
+  settimeofday(&tv, nullptr);
+
+  char buf[32];
+  strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M:%S", &tm);
+  Serial.printf("[Time] no NTP — seeded clock from hardware RTC: %s\n", buf);
+  return true;
 }
 
 // ── nowIso8601 ────────────────────────────────────────────────

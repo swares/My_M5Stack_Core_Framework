@@ -75,6 +75,17 @@ See `CODE_AUDIT.md` for the findings that motivated the entries below.
   frozen `loop()` panics and reboots the device. Registered post-boot so the slow
   Module-LLM/TLS/SD init can't false-trip it; timeout (default 20 s) sits above
   the only bounded in-loop blocker (the ~8 s alert POST).
+- **RTC wall-clock fallback for logs.** `RTC_TIME_FALLBACK` (Config.h, default
+  true): when NTP is unreachable, the system clock is seeded at boot from the
+  battery-backed hardware RTC (BM8563 on Core2/CoreS3/Tough) if it holds a
+  plausible, previously-set time — so the SD log's `datetime` column and
+  timestamped filename work offline, not just over Wi-Fi. The API now reports
+  `time_source` (`"ntp"` / `"rtc"` / `"none"`) alongside `time_synced` so the
+  dashboard doesn't imply NTP precision for RTC-sourced time. The `/alerts.csv`
+  rows gained a leading ISO-8601 `datetime` column to match the sensor log.
+  Time hierarchy is NTP → RTC → uptime: the always-present uptime column
+  (`time_s` sensor / `uptime_ms` alerts) still carries ordering when no
+  wall-clock exists, and `datetime` is left blank rather than fake-precise.
 
 ### Pi orchestrator (`scripts/orchestrator.py`)
 - **Per-request state** (`CODE_AUDIT_2.md` #2). Each `--serve` request gets its

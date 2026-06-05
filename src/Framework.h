@@ -63,11 +63,19 @@ class Framework {
   // Detected board info (valid after begin())
   const BoardInfo& board() const { return *_board; }
 
-  // True once an NTP sync has succeeded.  When false, getLocalTime()
-  // still returns *something* (the ESP32's RTC starts at the Unix
-  // epoch after reset and ticks from there), but callers that want
-  // real wall-clock time should treat that as a fallback.
+  // True once the system clock holds real wall-clock time — either from
+  // an NTP sync OR (when NTP was unreachable) seeded from the hardware
+  // RTC via the RTC_TIME_FALLBACK path.  When false, getLocalTime()
+  // still returns *something* (the ESP32 RTC starts at the Unix epoch
+  // after reset and ticks from there), but it isn't real time.
   bool timeSynced() const { return _timeSynced; }
+
+  // Where the current wall-clock came from: "ntp", "rtc", or "none".
+  // Surfaced in the API so the dashboard can show RTC-seeded time
+  // without implying NTP-grade accuracy.
+  const char* timeSource() const {
+    return !_timeSynced ? "none" : (_timeFromRtc ? "rtc" : "ntp");
+  }
 
   // True when the device is running as its own Wi-Fi access point
   // (Config.h WIFI_SSID left empty) instead of joined to a network
@@ -136,10 +144,15 @@ class Framework {
   void _connectWiFi();
   void _startAccessPoint();  // softAP, used when WIFI_SSID is empty
   void _syncTime();
+  // Seed the system clock from the hardware RTC when NTP is unavailable.
+  // Returns true only if the board has an RTC holding a plausible
+  // (previously-set) time; false otherwise.  See RTC_TIME_FALLBACK.
+  bool _seedTimeFromRtc();
   void _scanAndBind();
   bool _probe(TwoWire* w, uint8_t addr);
 
   bool _timeSynced = false;
+  bool _timeFromRtc = false;  // wall-clock came from RTC fallback, not NTP
   bool _apMode = false;  // true once _startAccessPoint() succeeds
   bool _forceSetupPortal = false;  // STA join failed → serve portal on AP
 
