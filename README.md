@@ -2042,6 +2042,112 @@ For each mode/option, the files and variables to change:
     `ENABLE_OPTIONAL_I2C` block.  ⚠ Grove carries only I2C — run I2C on
     Port-A and jump the IRQ pin to a free GPIO.
 
+76. **Threshold / event alarm engine — `AlertManager` (milestone 1).**  A
+    new toggleable output module (`OUT_ALERTS`), the same shape as
+    `MQTTOut` / `SDLogger`: a `Framework` member that runs in the loop,
+    reads `(slug, key)` values from each plugin's `getReadings()`, and
+    runs them through a per-rule **state machine** — the framework's one
+    genuinely new primitive (everything else is current-state polling;
+    this adds edges/events).  Two rule kinds: **THRESHOLD** (sustained
+    compare with debounce + hysteresis clear) and **EVENT** (an upward
+    edge on a counter, optionally gated by a second reading).  Per rule:
+    severity, target-channel bitmask, latch-until-ack vs auto-reset, and
+    a notification cooldown.  State changes emit an `Event` into a
+    16-deep in-RAM ring + a serial line; `ack()` releases latched rules
+    and `toJson()` exposes the state (ready for the dashboard).  Ships two
+    seed rules: geiger `usv_per_h ≥ 5.0` (latched critical) and AS3935
+    `strikes` edge gated by `distance_km ≤ 10`.  **Milestone 1 is
+    headless** — events go to serial + the ring only; the channel sinks
+    (SMS / LoRa / Email / Webhook / Buzzer / LCD / MQTT / Dashboard / SD)
+    and the NVS rule store + dashboard editor are later milestones.  Split
+    `src/AlertManager.{h,cpp}` (breaks the `Framework` include cycle like
+    `MQTTOut`); `Framework` gains an `alerts` member + begin/update calls;
+    `Config.h` adds `OUT_ALERTS` and the seed-rule thresholds.
+
+77. **Alarm "cheap" sinks — buzzer / LCD / MQTT / SD (milestone 2).**
+    `AlertManager::_route()` now fans each event out to the channels named
+    in the rule's bitmask.  Four sinks, each reusing an existing module:
+    **Buzzer** — the built-in M5 speaker (`M5.Speaker.tone`) chirps on a
+    raised/renotified WARN/CRITICAL (gated by `ALERT_BUZZER`); **LCD** —
+    `DisplayManager::setAlert/clearAlert` overlays a severity-coloured
+    strip (header/amber/red) on the top of the live view, cleared on
+    resolve/ack; **MQTT** — `MQTTOut::publishAlert()` posts one event JSON
+    to `<base>/alert` (not retained); **SD** — `SDLogger::logAlert()`
+    appends a CSV row to a separate `/alerts.csv` (open+close per write so
+    it never corrupts the sensor log).  Each touched module gained a small
+    public method plus a matching stub so it still builds with that output
+    compiled out, and the router skips unavailable channels.  `CH_DASH` is
+    served by the engine's event ring (milestone 3); `CH_LORA` / `EMAIL` /
+    `WEBHOOK` / `SMS` are no-ops until their milestones (the bits are
+    already set on the seed rules).  Config adds `ALERT_BUZZER` +
+    pitch/length.
+
+78. **Alarm REST + dashboard panel (milestone 3a).**  `GET /api/alerts`
+    returns the engine state + recent-event ring (straight from
+    `AlertManager::toJson()`); `POST /api/alerts/ack` (optional `?rule=N`,
+    default all) releases latched rules — both wired on the HTTPS server
+    and the plain-HTTP-AP path.  A new **⚠ Alarms** dashboard panel polls
+    `/api/alerts`, shows itself only when the engine is enabled, renders
+    the event ring newest-first with severity-coloured rows, and has an
+    **Ack all** button.  The `AlertManager` stub gained `toJson()` so the
+    routes compile with `OUT_ALERTS` off.  (Milestone 3b — NVS rule
+    storage + a runtime rule editor — is deferred to its own pass; the
+    engine runs the compiled seed rules until then.)
+
+79. **Alarm rule persistence + editor (milestone 3b).**  Rules are now
+    runtime-editable and survive reboots.  `Settings` gained an
+    `alert_rules` NVS blob (`alertRules()` / `setAlertRules()`), hybrid
+    with the Config seed like Wi-Fi/MQTT.  `AlertManager` got compact
+    JSON (de)serialisation, an NVS-or-seed load in `begin()`, and
+    `rulesToJson` / `upsertRule` / `deleteRule` / `resetRules` — edits
+    rebuild rule state and persist immediately (no reboot; rules eval
+    every poll).  REST: `GET /api/alerts/rules`, `POST
+    /api/alerts/rules/{save,delete,reset}`, on both server paths.  A
+    **⚙ Rules** editor in the dashboard Alarms panel lists rules with
+    edit/delete and a full add/edit form (slug, key, kind, op, threshold,
+    gate, severity, the nine channel checkboxes, latch, debounce,
+    hysteresis, cooldown) + Reset-to-defaults.
+
+80. **LoRa alert sink (milestone 4).**  `AlertManager::_route()` now fans
+    `CH_LORA` events out over LoRa P2P by calling the existing LoRa
+    plugin's `command("send", …)` — found by slug, the same decoupling
+    `NetDevice_Router` uses, so an absent radio auto-disables the channel.
+    Sends on state edges only (raise/clear, not every renotify) to spare
+    airtime; no new transmit code.  First off-device alert channel — add
+    `lora` to a rule's channels (via the new editor) to use it.
+
+81. **Email + Webhook alert sinks (milestone 5).**  Off-device alerts over
+    HTTPS, through a **serialised outbound queue** so TLS handshakes never
+    overlap (or contend for heap more than one at a time — the caveat from
+    the feature's verdict): `AlertManager` sinks call `_enqueueHttp()`, and
+    `update()` drains exactly one job per loop via `_pumpHttp()` →
+    `_httpPost()` (a bounded, one-shot `WiFiClientSecure` POST that parses
+    the `https://host[:port]/path` URL, sends the body with an optional
+    `Authorization` header, reads the status line, 8 s timeout).  **Webhook**
+    (`CH_WEBHOOK`) POSTs the event JSON to `ALERT_WEBHOOK_URL` (any HTTPS
+    endpoint — Discord/Slack webhook, IFTTT, a Pi); **Email** (`CH_EMAIL`)
+    POSTs `{"to","subject","text"}` to `ALERT_EMAIL_URL` with
+    `ALERT_EMAIL_AUTH`.  Both fire on state edges only (raise/clear, not
+    renotify).  Config adds the URL/auth/recipient constants (empty = the
+    channel auto-disables).  Five of the six alarm milestones done — only
+    SMS (the modem AT state machine) remains.
+
+82. **SMS alert sink (milestone 6) — completes the alarm feature.**
+    `UartDevice_Modem` is now controllable with `command("sms",
+    "<number>,<text>")` driving a non-blocking **AT send state machine**
+    (`AT+CMGF=1` → `OK` → `AT+CMGS="<num>"` → the raw `>` prompt → body +
+    Ctrl-Z → `+CMGS`/`OK`), driven by `fastPoll()`, with a 30 s stuck-send
+    timeout, a per-~24 h **daily cap** (`SMS_DAILY_MAX`) as the cost
+    ceiling, `sms_busy`/`sms_sent`/`sms_failed` status, and a Send-SMS box
+    on the dashboard for manual testing.  `AlertManager::_route()` handles
+    `CH_SMS` on raise/clear edges by calling the modem's command with
+    `ALERT_SMS_TO`.  ⚠ The modem owns the single Port-C UART (mutually
+    exclusive with LLM/LoRa/GPS), SMS costs per message, and the AT flow is
+    the standard SIMCom sequence but may need per-firmware tuning.  All six
+    milestones of the threshold-alarm + multi-channel-routing feature are
+    now in: engine → cheap sinks → REST/dashboard → persistent editable
+    rules → LoRa / Webhook / Email / SMS.
+
 ---
 
 ## License
