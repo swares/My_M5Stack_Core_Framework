@@ -44,6 +44,7 @@
  */
 
 #include "src/Framework.h"
+#include "esp_task_wdt.h"   // hardware Task Watchdog (optional, see WDT_ENABLE)
 
 // ── Internal (built-in) hardware ──────────────────────────────
 //  Board-aware plugins — the same plugin handles either chip
@@ -419,8 +420,27 @@ void setup() {
 #endif
 
   fw.begin();
+
+  // ── Hardware watchdog (optional; WDT_ENABLE in Config.h) ──
+  //  Registered AFTER begin() so the slow boot work (Module-LLM model
+  //  load, TLS/SD init) can't trip it.  Once added, loop() must feed it
+  //  (see below) or the chip panics and reboots — which is exactly the
+  //  recovery we want if loop() ever wedges.
+  if (WDT_ENABLE) {
+    esp_task_wdt_config_t wdtCfg = {
+        .timeout_ms     = (uint32_t)(WDT_TIMEOUT_S * 1000UL),
+        .idle_core_mask = 0,        // watch THIS (loop) task, not idle tasks
+        .trigger_panic  = true,     // timeout -> panic -> reboot
+    };
+    // The Arduino/IDF core may already have started the Task WDT; if so,
+    // init() returns ESP_ERR_INVALID_STATE and we just reconfigure it.
+    if (esp_task_wdt_init(&wdtCfg) == ESP_ERR_INVALID_STATE)
+      esp_task_wdt_reconfigure(&wdtCfg);
+    esp_task_wdt_add(nullptr);      // register the loop task
+  }
 }
 
 void loop() {
+  if (WDT_ENABLE) esp_task_wdt_reset();   // feed the watchdog each pass
   fw.update();
 }
