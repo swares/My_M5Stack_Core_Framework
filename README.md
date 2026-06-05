@@ -331,7 +331,10 @@ back to the seed.
 Edit rules from the **dashboard** — the ⚙ Rules editor in the Alarms
 panel lists every rule with edit/delete and an add/edit form (slug, key,
 kind, op, threshold, gate, severity, the nine channel checkboxes, latch,
-debounce, hysteresis, cooldown) — or over REST:
+debounce, hysteresis, cooldown). The **slug**, **key** and **gate-key**
+fields offer dropdown suggestions of the common plugin slugs and reading
+keys (an HTML `datalist`), but stay free-text so you can target any
+plugin's `getReadings()` key the list doesn't cover. Or edit over REST:
 
 | Method · Endpoint | Action |
 |---|---|
