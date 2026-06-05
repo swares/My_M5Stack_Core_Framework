@@ -1283,7 +1283,8 @@ For each mode/option, the files and variables to change:
 
 - _Display off / Scroll / Grid_ — `Config.h`: `OUT_DISPLAY`, `DISPLAY_SCROLL` (true = scroll, false = grid), `DISPLAY_CYCLE_MS`, `DISPLAY_SCROLL_PX`.
 - _Serial_ — `Config.h`: `OUT_SERIAL` (boot log is always on regardless).
-- _SD log_ — `Config.h`: `OUT_SD_LOG`.
+- _SD log_ — `Config.h`: `OUT_SD_LOG`. Every row starts with `datetime` (ISO-8601 wall-clock) + `time_s` (uptime); the filename is timestamped when the clock is set.
+- _Time / clock_ — `Config.h`: `NTP_SERVER`, `NTP_TZ`, `NTP_TIMEOUT_MS`; `RTC_TIME_FALLBACK` (default true). Clock hierarchy is **NTP → RTC → uptime**: after WiFi, time syncs from NTP and is pushed to the hardware RTC; if NTP is unreachable, the clock is seeded from the battery-backed RTC (BM8563 on Core2/CoreS3/Tough) so the SD `datetime` column + timestamped filename work offline. With neither, `datetime` is left blank and the always-present uptime column carries ordering. `/api/all` reports `time_source` (`ntp`/`rtc`/`none`) next to `time_synced`.
 
 **Security &amp; recovery**
 
