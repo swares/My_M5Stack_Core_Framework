@@ -13,6 +13,7 @@ bool   g_open = false;
 // RAM cache of the NVS values (empty string = "not set in NVS").
 String c_ssid, c_wpass, c_user, c_pass;
 String c_mqttHost, c_mqttUser, c_mqttPass, c_claude;
+String c_alertRules;   // serialized alarm-rule set (empty = use Config seed)
 uint16_t c_mqttPort = 0;   // 0 = not set in NVS → use compiled default
 bool   c_prov = false;
 bool   c_apOnly = false;      // run as standalone AP serving the dashboard
@@ -45,6 +46,7 @@ void Settings::begin() {
   c_prov     = g_prefs.getBool  ("prov", false);
   c_apOnly   = g_prefs.getBool  ("ap_only", false);
   c_forceSetup = g_prefs.getBool("force_setup", false);
+  c_alertRules = g_prefs.getString("alert_rules", "");
   Serial.printf("[Settings] NVS loaded (provisioned=%s, wifi=%s)\n",
                 isProvisioned() ? "yes" : "no",
                 wifiSsid().length() ? "set" : "unset");
@@ -120,6 +122,14 @@ void Settings::setMqtt(const String& user, const String& pass) {
 void Settings::setClaudeKey(const String& key) {
   c_claude = key;
   if (g_open) g_prefs.putString("claude_key", key);
+}
+
+// ── Alarm rules (serialized JSON blob; "" = use the Config seed) ──
+String Settings::alertRules() { return c_alertRules; }
+bool   Settings::alertRulesSet() { return c_alertRules.length() > 0; }
+void Settings::setAlertRules(const String& json) {
+  c_alertRules = json;
+  if (g_open) g_prefs.putString("alert_rules", json);
 }
 
 void Settings::markProvisioned() {

@@ -66,6 +66,13 @@ void setMqttServer(const String& host, uint16_t port);
 void setMqtt(const String& user, const String& pass);
 void setClaudeKey(const String& key);
 
+// Alarm-rule set, persisted as a serialized JSON blob.  Empty means
+// "not overridden" → AlertManager falls back to the Config.h seed
+// rules (same hybrid model as Wi-Fi/MQTT).
+String alertRules();
+bool   alertRulesSet();
+void   setAlertRules(const String& json);
+
 // Mark the device provisioned (persisted).  Called after a
 // successful setup submit.
 void markProvisioned();

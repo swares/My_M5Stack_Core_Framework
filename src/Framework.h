@@ -19,6 +19,7 @@
 #include "SerialOut.h"
 #include "MQTTOut.h"
 #include "SDLogger.h"
+#include "AlertManager.h"
 
 class Framework {
  public:
@@ -111,6 +112,7 @@ class Framework {
   SerialOut serial;
   MQTTOut mqtt;
   SDLogger sdlog;
+  AlertManager alerts;
 
  private:
   std::vector<IDevice*> _plugins;

@@ -316,6 +316,42 @@ footer{text-align:center;padding:20px;color:var(--dim);font-size:.72rem}
   </div>
 </div>
 
+<div class="llm" id="alarms-panel" hidden>
+  <div class="llm-head"><span class="dot" id="alarms-dot"></span>&#9888; Alarms
+    <span id="alarms-meta" style="opacity:.65;font-weight:400;font-size:.85em"></span>
+    <button id="rule-toggle" class="ghost" style="margin-left:auto">&#9881; Rules</button>
+    <button id="alarms-ack" class="ghost">Ack all</button></div>
+  <div class="llm-convo" id="alarms-convo">
+    <div class="llm-hint">No alerts yet &mdash; rules evaluate every poll.</div>
+  </div>
+  <div id="rules-box" hidden style="border-top:1px solid var(--border);padding:10px 14px">
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+      <b style="font-size:.78rem">Rules</b>
+      <button id="rule-add" class="ghost" style="margin-left:auto">+ Add</button>
+      <button id="rule-reset" class="ghost">Reset</button>
+    </div>
+    <div id="rule-list"></div>
+    <form id="rule-form" hidden style="margin-top:8px;display:grid;grid-template-columns:auto 1fr;gap:5px 8px;font-size:.74rem;align-items:center">
+      <input type="hidden" name="id">
+      <label>Slug</label><input name="slug" placeholder="geiger" autocomplete="off">
+      <label>Key</label><input name="key" placeholder="usv_per_h" autocomplete="off">
+      <label>Kind</label><select name="kind"><option value="0">threshold</option><option value="1">event</option></select>
+      <label>Op</label><select name="op"><option value="0">&ge;</option><option value="1">&le;</option><option value="2">&gt;</option><option value="3">&lt;</option></select>
+      <label>Threshold</label><input name="thr" type="number" step="any">
+      <label>Gate key</label><input name="gk" placeholder="(optional) distance_km" autocomplete="off">
+      <label>Gate op</label><select name="gop"><option value="0">&ge;</option><option value="1">&le;</option><option value="2">&gt;</option><option value="3">&lt;</option></select>
+      <label>Gate val</label><input name="gv" type="number" step="any">
+      <label>Severity</label><select name="sev"><option value="0">info</option><option value="1">warn</option><option value="2">critical</option></select>
+      <label>Channels</label><span id="rule-ch"></span>
+      <label>Latch</label><input name="latch" type="checkbox">
+      <label>Debounce</label><input name="deb" type="number" min="1">
+      <label>Hysteresis %</label><input name="hyst" type="number" step="any">
+      <label>Cooldown s</label><input name="cd" type="number" min="0">
+      <span></span><span><button type="submit">Save</button> <button type="button" id="rule-cancel" class="ghost">Cancel</button></span>
+    </form>
+  </div>
+</div>
+
 <div class="section-head" id="ctrl-head" hidden>
   <h2>Controllable Devices</h2>
   <span class="count" id="ctrl-count">0</span>
@@ -896,6 +932,113 @@ function loraSend(){
   });
 })();
 
+// ── Alarms panel ───────────────────────────────────────────
+//  Polls /api/alerts on its own cadence and shows itself only when
+//  the alarm engine is enabled.  Re-renders the event ring each poll
+//  (small list), newest first, severity-coloured.  "Ack all" releases
+//  every latched rule.
+function alarmsPoll(){
+  var next=3000;
+  fetch('/api/alerts').then(function(r){return r.json();}).then(function(d){
+    var p=document.getElementById('alarms-panel');
+    if(!d||!d.enabled){p.hidden=true;next=5000;return;}
+    p.hidden=false;
+    document.getElementById('alarms-dot').className='dot'+((d.active|0)>0?' on':'');
+    document.getElementById('alarms-meta').textContent=
+      (d.active|0)+' active · '+(d.rules|0)+' rules';
+    var evs=d.events||[];
+    if(evs.length){
+      var c=document.getElementById('alarms-convo');
+      c.innerHTML='';
+      evs.slice().reverse().forEach(function(e){
+        var sev=e.sev||'info';
+        var col=sev==='critical'?'var(--red)':sev==='warn'?'var(--orange)':'var(--green)';
+        var el=document.createElement('div');
+        el.className='llm-msg';el.style.borderLeft='3px solid '+col;
+        el.textContent='['+sev.toUpperCase()+'] '+esc(e.slug)+'.'+esc(e.key)+' = '+
+          (+e.value).toFixed(2)+'  '+esc(e.type)+'  ('+Math.round((e.age_ms||0)/1000)+'s)';
+        c.appendChild(el);
+      });
+    }
+  }).catch(function(){}).finally(function(){setTimeout(alarmsPoll,next);});
+}
+(function(){
+  var b=document.getElementById('alarms-ack');
+  if(b)b.addEventListener('click',function(){
+    fetch('/api/alerts/ack',{method:'POST'}).then(function(){alarmsPoll();}).catch(function(){});
+  });
+})();
+
+// ── Rule editor (milestone 3b) ──────────────────────────────
+//  Channel bits MUST match AlertManager::Channel.
+var RULE_CH=[['buzzer',1],['lcd',2],['mqtt',4],['sd',8],['dash',16],
+             ['lora',32],['email',64],['webhook',128],['sms',256]];
+var RULE_OP=['≥','≤','>','<'];
+function ruleChBoxes(){
+  var host=document.getElementById('rule-ch');if(!host)return;host.innerHTML='';
+  RULE_CH.forEach(function(c){
+    var l=document.createElement('label');
+    l.style.cssText='font-size:.7rem;margin-right:7px;color:var(--text)';
+    l.innerHTML='<input type="checkbox" data-bit="'+c[1]+'"> '+c[0];
+    host.appendChild(l);
+  });
+}
+function rulesLoad(){
+  fetch('/api/alerts/rules').then(function(r){return r.json();}).then(function(d){
+    var L=document.getElementById('rule-list');L.innerHTML='';
+    (d.rules||[]).forEach(function(r){
+      var div=document.createElement('div');
+      div.style.cssText='display:flex;gap:6px;align-items:center;padding:3px 0;font-size:.74rem;border-bottom:1px solid var(--row-border)';
+      var summ=(r.kind==1?'event':(RULE_OP[r.op]||'?')+' '+r.thr);
+      var sev=['info','warn','crit'][r.sev]||'';
+      var sp=document.createElement('span');sp.style.flex='1';
+      sp.textContent=(r.en?'':'○ ')+r.slug+'.'+r.key+' '+summ+'  ['+sev+']';
+      var e=document.createElement('button');e.className='ghost';e.textContent='Edit';
+      e.onclick=function(){ruleEdit(r);};
+      var x=document.createElement('button');x.className='ghost';x.textContent='Del';
+      x.onclick=function(){if(confirm('Delete rule '+r.id+'?'))
+        fetch('/api/alerts/rules/delete?id='+r.id,{method:'POST'}).then(rulesLoad);};
+      div.appendChild(sp);div.appendChild(e);div.appendChild(x);L.appendChild(div);
+    });
+  }).catch(function(){});
+}
+function ruleEdit(r){
+  r=r||{};var f=document.getElementById('rule-form');f.hidden=false;
+  f.id.value=r.id||0;f.slug.value=r.slug||'';f.key.value=r.key||'';
+  f.kind.value=r.kind||0;f.op.value=r.op||0;f.thr.value=(r.thr!=null?r.thr:0);
+  f.gk.value=r.gk||'';f.gop.value=(r.gop!=null?r.gop:1);f.gv.value=(r.gv!=null?r.gv:0);
+  f.sev.value=(r.sev!=null?r.sev:1);f.latch.checked=!!r.latch;
+  f.deb.value=(r.deb!=null?r.deb:2);f.hyst.value=(r.hyst!=null?r.hyst:10);f.cd.value=(r.cd!=null?r.cd:60);
+  var ch=r.ch||0;
+  document.querySelectorAll('#rule-ch input').forEach(function(b){b.checked=(ch&(+b.dataset.bit))!==0;});
+}
+function ruleSave(ev){
+  ev.preventDefault();var f=document.getElementById('rule-form');
+  if(!f.slug.value.trim()||!f.key.value.trim()){alert('Slug and key are required.');return;}
+  var ch=0;document.querySelectorAll('#rule-ch input').forEach(function(b){if(b.checked)ch|=+b.dataset.bit;});
+  var r={id:+f.id.value||0,en:1,slug:f.slug.value.trim(),key:f.key.value.trim(),
+    kind:+f.kind.value,op:+f.op.value,thr:+f.thr.value,
+    gate:f.gk.value.trim()?1:0,gk:f.gk.value.trim(),gop:+f.gop.value,gv:+f.gv.value,
+    sev:+f.sev.value,ch:ch,latch:f.latch.checked?1:0,
+    deb:+f.deb.value,hyst:+f.hyst.value,cd:+f.cd.value};
+  fetch('/api/alerts/rules/save',{method:'POST',
+    headers:{'Content-Type':'application/json'},body:JSON.stringify(r)})
+    .then(function(res){if(res.ok){f.hidden=true;rulesLoad();}else alert('Save rejected.');})
+    .catch(function(){alert('Save failed.');});
+}
+(function(){
+  ruleChBoxes();
+  var t=document.getElementById('rule-toggle');
+  if(t)t.addEventListener('click',function(){
+    var bx=document.getElementById('rules-box');bx.hidden=!bx.hidden;if(!bx.hidden)rulesLoad();});
+  var a=document.getElementById('rule-add');if(a)a.addEventListener('click',function(){ruleEdit({});});
+  var c=document.getElementById('rule-cancel');if(c)c.addEventListener('click',function(){document.getElementById('rule-form').hidden=true;});
+  var rs=document.getElementById('rule-reset');if(rs)rs.addEventListener('click',function(){
+    if(confirm('Reset to default (seed) rules?'))fetch('/api/alerts/rules/reset',{method:'POST'}).then(rulesLoad);});
+  var fm=document.getElementById('rule-form');if(fm)fm.addEventListener('submit',ruleSave);
+})();
+alarmsPoll();
+
 loadEndpoints();
 refresh();
 setInterval(refresh,5000);
@@ -1246,6 +1389,10 @@ void WebAPI::begin(Framework* fw) {
     if (!_requireAuth()) return;
     _route_mqtt();
   });
+  _srv->on("/api/alerts", [this](){
+    if (!_requireAuth()) return;
+    _route_alerts();
+  });
   _srv->on("/api/endpoints", [this](){
     if (!_requireAuth()) return;
     _route_endpoints();
@@ -1299,6 +1446,39 @@ void WebAPI::begin(Framework* fw) {
     // here — catch it explicitly before the /api/<slug> plugin lookup,
     // otherwise "settings/save" is mistaken for a plugin slug and 404s
     // with "plugin not found: settings/save".
+    if (uri == "/api/alerts/ack") {
+      int rid = _srv->hasArg("rule") ? _srv->arg("rule").toInt() : -1;
+      _fw->alerts.ack(rid);
+      _srv->send(200, "application/json", "{\"ok\":true}");
+      return;
+    }
+    if (uri == "/api/alerts/rules") {
+      JsonDocument doc;
+      JsonArray arr = doc["rules"].to<JsonArray>();
+      _fw->alerts.rulesToJson(arr);
+      _json(doc);
+      return;
+    }
+    if (uri == "/api/alerts/rules/save") {
+      JsonDocument d;
+      bool ok = !deserializeJson(d, _srv->arg("plain")) &&
+                _fw->alerts.upsertRule(d.as<JsonObjectConst>());
+      _srv->send(ok ? 200 : 400, "application/json",
+                 ok ? "{\"ok\":true}" : "{\"ok\":false}");
+      return;
+    }
+    if (uri == "/api/alerts/rules/delete") {
+      long id = _srv->hasArg("id") ? _srv->arg("id").toInt() : -1;
+      bool ok = id > 0 && _fw->alerts.deleteRule((uint8_t)id);
+      _srv->send(ok ? 200 : 400, "application/json",
+                 ok ? "{\"ok\":true}" : "{\"ok\":false}");
+      return;
+    }
+    if (uri == "/api/alerts/rules/reset") {
+      _fw->alerts.resetRules();
+      _srv->send(200, "application/json", "{\"ok\":true}");
+      return;
+    }
     if (uri == "/api/settings/save") {
       _route_settingsSave();
       return;
@@ -1980,6 +2160,16 @@ void WebAPI::_route_mqtt() {
   _json(doc);
 }
 
+// GET /api/alerts — alarm-engine state + the recent-event ring,
+// straight from AlertManager::toJson().  POST /api/alerts/ack
+// (handled in onNotFound) releases latched rules.
+void WebAPI::_route_alerts() {
+  JsonDocument doc;
+  JsonObject o = doc.to<JsonObject>();
+  _fw->alerts.toJson(o);
+  _json(doc);
+}
+
 void WebAPI::_route_sdcard() {
   JsonDocument doc;
   _buildSdStatus(doc);
@@ -2219,6 +2409,11 @@ void WebAPI::_wirePlainAp(Srv* s) {
     if (!apAuth(s)) return;
     JsonDocument doc; _buildMqttStatus(doc); apSendJson(s, doc);
   });
+  s->on("/api/alerts", [this, s]() {
+    if (!apAuth(s)) return;
+    JsonDocument doc; JsonObject o = doc.to<JsonObject>();
+    _fw->alerts.toJson(o); apSendJson(s, doc);
+  });
   s->on("/api/mqtt/publish", [this, s]() {
     if (!apAuth(s)) return;
     bool fired = _fw->mqtt.publishNow();
@@ -2260,6 +2455,41 @@ void WebAPI::_wirePlainAp(Srv* s) {
   s->onNotFound([this, s]() {
     if (!apAuth(s)) return;
     String path = apPath(s);
+
+    // POST /api/alerts/ack — release latched rules.
+    if (path == "/api/alerts/ack") {
+      int rid = s->hasArg("rule") ? s->arg("rule").toInt() : -1;
+      _fw->alerts.ack(rid);
+      s->send(200, "application/json", "{\"ok\":true}");
+      return;
+    }
+    if (path == "/api/alerts/rules") {
+      JsonDocument doc;
+      JsonArray arr = doc["rules"].to<JsonArray>();
+      _fw->alerts.rulesToJson(arr);
+      apSendJson(s, doc);
+      return;
+    }
+    if (path == "/api/alerts/rules/save") {
+      JsonDocument d;
+      bool ok = !deserializeJson(d, s->arg("plain")) &&
+                _fw->alerts.upsertRule(d.as<JsonObjectConst>());
+      s->send(ok ? 200 : 400, "application/json",
+              ok ? "{\"ok\":true}" : "{\"ok\":false}");
+      return;
+    }
+    if (path == "/api/alerts/rules/delete") {
+      long id = s->hasArg("id") ? s->arg("id").toInt() : -1;
+      bool ok = id > 0 && _fw->alerts.deleteRule((uint8_t)id);
+      s->send(ok ? 200 : 400, "application/json",
+              ok ? "{\"ok\":true}" : "{\"ok\":false}");
+      return;
+    }
+    if (path == "/api/alerts/rules/reset") {
+      _fw->alerts.resetRules();
+      s->send(200, "application/json", "{\"ok\":true}");
+      return;
+    }
 
     // POST /api/settings/save — mirror _route_settingsSave().
     if (path == "/api/settings/save") {

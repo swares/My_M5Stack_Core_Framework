@@ -78,6 +78,7 @@ class WebAPI {
   void _route_scan();
   void _route_config();
   void _route_mqtt();
+  void _route_alerts();   // GET /api/alerts — alarm engine state + ring
   void _route_sdcard();
   void _route_endpoints();
   void _route_404();

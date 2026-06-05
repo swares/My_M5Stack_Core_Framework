@@ -482,6 +482,26 @@ void DisplayManager::handleInput(Framework* fw) {
 }
 
 // ── update ────────────────────────────────────────────────────
+// ── Alert banner ──────────────────────────────────────────────
+//  AlertManager's LCD sink.  setAlert() raises a coloured strip drawn
+//  over the top of the live view; clearAlert() drops it.
+void DisplayManager::setAlert(const String& text, uint8_t severity) {
+  _alertText = text;
+  _alertSev = severity;
+  _alertActive = true;
+}
+void DisplayManager::clearAlert() {
+  _alertActive = false;
+  _dirty = true;  // force a clean detail redraw to erase the strip
+}
+//  Drawn LAST in update() so it sits over whatever view rendered.
+void DisplayManager::_drawAlertBanner() {
+  uint16_t col = _alertSev >= 2 ? C_ERR : (_alertSev == 1 ? C_ACNT : C_HDR);
+  M5.Display.fillRect(0, 0, _W, 20, col);
+  M5.Display.setTextColor(C_TEXT, col);
+  M5.Display.drawString(_alertText.c_str(), 6, 3, &fonts::Font2);
+}
+
 void DisplayManager::update(Framework* fw) {
   if (!enabled || !_ready) return;
 
@@ -490,6 +510,7 @@ void DisplayManager::update(Framework* fw) {
     // the readings stay live without hammering the SPI bus.
     if (_dirty || millis() - _detailDrawn >= POLL_MS) {
       _renderDetail(fw);
+      if (_alertActive) _drawAlertBanner();
       _detailDrawn = millis();
       _dirty = false;
     }
@@ -501,5 +522,6 @@ void DisplayManager::update(Framework* fw) {
     _renderTicker(fw);
   else
     _renderFixed(fw);
+  if (_alertActive) _drawAlertBanner();
 }
 #endif  // OUT_DISPLAY

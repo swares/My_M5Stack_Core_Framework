@@ -85,6 +85,11 @@ class MQTTOut {
   // testing.  Returns false if MQTT is disabled or not connected.
   bool publishNow();
 
+  // Publish one alert-event JSON to <base>/alert (QoS0, not retained —
+  // an alert is an event, not a state).  AlertManager's MQTT sink.
+  // Returns false if MQTT is disabled or the broker isn't connected.
+  bool publishAlert(const String& payload);
+
   // Decode a PubSubClient::state() value into a short human string.
   // Useful for logging and the /api/mqtt endpoint.  Caller does not
   // own the returned pointer.
@@ -169,6 +174,7 @@ class MQTTOut {
   static bool tlsMutual() { return false; }
   static bool tlsVerified() { return false; }
   bool publishNow() { return false; }
+  bool publishAlert(const String&) { return false; }
   static const char* stateText(int) { return "disabled"; }
 
  private:

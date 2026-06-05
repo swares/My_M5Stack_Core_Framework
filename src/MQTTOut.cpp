@@ -279,6 +279,17 @@ bool MQTTOut::publishNow() {
   return true;
 }
 
+// ── publishAlert ──────────────────────────────────────────────
+//  Fire-and-forget alert event to <base>/alert.  Not retained — an
+//  alert is an event, not the device's current state.  Driven by
+//  AlertManager's MQTT sink.
+bool MQTTOut::publishAlert(const String& payload) {
+  if (!enabled || WiFi.status() != WL_CONNECTED || !_client.connected())
+    return false;
+  String topic = String(MQTT_BASE_TOPIC) + "/alert";
+  return _client.publish(topic.c_str(), payload.c_str());
+}
+
 // ── _busLabel ─────────────────────────────────────────────────
 //  Same labelling convention as SerialOut/WebAPI:
 //    "internal"          — root bus (CoreS3/Core2 separate buses)

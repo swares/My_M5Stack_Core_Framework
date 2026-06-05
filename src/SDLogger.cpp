@@ -474,6 +474,19 @@ bool SDLogger::flush() {
 //  Logging stops until the next reboot — there's no card-detect
 //  line on these boards to notice a reinsert, and the framework
 //  deliberately avoids hot-plug.  Exposed via GET /api/sdcard/eject.
+// ── logAlert ──────────────────────────────────────────────────
+//  Append one CSV line to /alerts.csv, opened + closed per write so
+//  the row is committed immediately (alerts are rare, so the cost of
+//  a per-write open/close is irrelevant).  Kept separate from the
+//  sensor log so neither file's format corrupts the other.
+void SDLogger::logAlert(const String& line) {
+  if (!enabled || !_stats.present) return;
+  File f = SD.open("/alerts.csv", FILE_APPEND);
+  if (!f) return;
+  f.println(line);
+  f.close();
+}
+
 bool SDLogger::eject() {
   if (!_stats.active) return false;
   if (_file) _file.close();

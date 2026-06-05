@@ -41,6 +41,13 @@ class DisplayManager {
   // random AP-password notice and other non-error call-outs.
   void showNotice(const String& title, const String& body);
 
+  // ── Alert banner (AlertManager LCD sink) ──────────────────
+  //  A coloured strip drawn over the top of whatever view is showing.
+  //  setAlert() raises it; clearAlert() drops it and forces a clean
+  //  redraw.  Severity 0/1/2 = info/warn/critical (→ header/amber/red).
+  void setAlert(const String& text, uint8_t severity);
+  void clearAlert();
+
  private:
   bool enabled = OUT_DISPLAY;
   int32_t _W = 0, _H = 0;
@@ -63,6 +70,11 @@ class DisplayManager {
   String _ticker;
   uint32_t _tickerBuilt = 0;
 
+  // Alert banner state (AlertManager LCD sink).
+  bool _alertActive = false;
+  uint8_t _alertSev = 0;
+  String _alertText;
+
   // ── Internal renderers ────────────────────────────────────
   //  All render directly on M5.Display (no off-screen sprite —
   //  see DisplayManager.cpp for rationale).
@@ -76,6 +88,7 @@ class DisplayManager {
   void _header(const String& title, uint16_t col);
   void _headerNav(const String& title);
   void _footer();
+  void _drawAlertBanner();  // overlay strip for an active alert
 
   // Nth (idx) active read-only sensor — a plugin that is active
   // and not controllable.  Always fills `total` with the read-only
@@ -126,5 +139,7 @@ class DisplayManager {
   void showScan(uint8_t*, uint8_t, bool) {}
   void showError(const String&) {}
   void showNotice(const String&, const String&) {}
+  void setAlert(const String&, uint8_t) {}
+  void clearAlert() {}
 };
 #endif                // OUT_DISPLAY

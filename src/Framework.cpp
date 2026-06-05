@@ -89,6 +89,7 @@ void Framework::begin() {
   sdlog.begin(this);
   webApi.begin(this);
   mqtt.begin(this);
+  alerts.begin(this);
 
   uint8_t active = 0;
   for (auto* p : _plugins) if (p->active) active++;
@@ -129,6 +130,7 @@ void Framework::update() {
   webApi.update();
   mqtt.update();
   sdlog.update();
+  alerts.update();
   display.update(this);
 }
 

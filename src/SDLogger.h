@@ -70,6 +70,11 @@ class SDLogger {
   // the logger wasn't active.
   bool eject();
 
+  // Append one alert-event CSV line to /alerts.csv (a separate file
+  // from the sensor log, opened+closed per write).  AlertManager's SD
+  // sink.  No-op if no card is mounted.
+  void logAlert(const String& line);
+
  private:
   Framework* _fw = nullptr;
   File _file;
@@ -120,6 +125,7 @@ class SDLogger {
   const Stats& stats() const { return _stats; }
   bool flush() { return false; }
   bool eject() { return false; }
+  void logAlert(const String&) {}
 
  private:
   Stats _stats;
