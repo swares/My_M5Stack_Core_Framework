@@ -46,6 +46,7 @@ identities are wired up automatically. See `src/BoardInfo.h`.
 | SD card logging | One CSV per boot (`/log_NNNN.csv`) with dynamic header built from active plugins |
 | Serial output | Formatted table in Arduino Serial Monitor |
 | Display output | Scrolling ticker **or** fixed multi-value grid on LCD |
+| Threshold alarms | Rule engine (threshold + event, debounce/hysteresis/latch) over any reading → buzzer / LCD / MQTT / SD / LoRa / webhook / email / SMS; editable, NVS-persistent rules |
 | All outputs toggleable | Per-channel enable/disable flags in `Config.h` |
 
 ---
