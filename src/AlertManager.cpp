@@ -321,6 +321,10 @@ void AlertManager::_enqueueHttp(const char* url, const char* auth,
 //  never contend for heap with more than one in flight at a time).
 void AlertManager::_pumpHttp() {
   if (_httpQ.empty() || WiFi.status() != WL_CONNECTED) return;
+  // Hold the job in the queue (don't dequeue) while the heap is too low
+  // for another TLS session — it retries on a later update() once memory
+  // frees up, rather than being dropped by a doomed handshake.
+  if (MIN_TLS_HEAP && ESP.getFreeHeap() < MIN_TLS_HEAP) return;
   HttpJob job = _httpQ.front();
   _httpQ.erase(_httpQ.begin());
   _httpPost(job.url, job.auth, job.body);
@@ -417,18 +421,29 @@ void AlertManager::_ruleToJson(const Rule& r, JsonObject o) {
 
 bool AlertManager::_ruleFromJson(JsonObjectConst o, Rule& r) {
   r = Rule{};
+  // Clamp every enum field coming from JSON to its valid range.  These
+  // values index fixed-size string tables (SV[]/TYT[]/SVT[]) in _emit /
+  // _route / toJson, and Op feeds a switch — an out-of-range value from a
+  // crafted POST /api/alerts/rules/save or a corrupt NVS blob would
+  // otherwise cause an out-of-bounds read.  An invalid value falls back
+  // to the field's safe default rather than being trusted.
+  auto clampEnum = [](uint8_t v, uint8_t hi, uint8_t dflt) -> uint8_t {
+    return v <= hi ? v : dflt;
+  };
   r.id            = o["id"]   | 0;
   r.enabled       = (o["en"]  | 1) != 0;
   strncpy(r.slug, o["slug"] | "", sizeof(r.slug) - 1);
   strncpy(r.key,  o["key"]  | "", sizeof(r.key) - 1);
-  r.kind          = static_cast<Kind>(static_cast<uint8_t>(o["kind"] | 0));
-  r.op            = static_cast<Op>(static_cast<uint8_t>(o["op"] | 0));
+  r.kind          = static_cast<Kind>(
+      clampEnum(o["kind"] | 0, K_EVENT, K_THRESHOLD));
+  r.op            = static_cast<Op>(clampEnum(o["op"] | 0, OP_LT, OP_GE));
   r.threshold     = o["thr"]  | 0.0f;
   r.hasGate       = (o["gate"] | 0) != 0;
   strncpy(r.gateKey, o["gk"] | "", sizeof(r.gateKey) - 1);
-  r.gateOp        = static_cast<Op>(static_cast<uint8_t>(o["gop"] | 1));
+  r.gateOp        = static_cast<Op>(clampEnum(o["gop"] | 1, OP_LT, OP_LE));
   r.gateVal       = o["gv"]   | 0.0f;
-  r.severity      = static_cast<Severity>(static_cast<uint8_t>(o["sev"] | 1));
+  r.severity      = static_cast<Severity>(
+      clampEnum(o["sev"] | 1, SEV_CRITICAL, SEV_WARN));
   r.channels      = o["ch"]   | 0;
   r.debounce      = o["deb"]  | 2;
   r.latch         = (o["latch"] | 0) != 0;

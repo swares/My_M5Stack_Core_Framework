@@ -517,11 +517,20 @@ void DisplayManager::update(Framework* fw) {
     return;
   }
 
-  // Overview — the existing all-sensors display.
-  if (DISPLAY_SCROLL)
-    _renderTicker(fw);
-  else
-    _renderFixed(fw);
-  if (_alertActive) _drawAlertBanner();
+  // Overview — the existing all-sensors display.  Throttled so it isn't
+  // repainted every loop iteration: the scrolling ticker only needs a
+  // frame at its scroll cadence (OVERVIEW_FRAME_MS), and the fixed grid
+  // only changes when the readings refresh (POLL_MS).  A _dirty flag
+  // (set on input or when an alert clears) forces an immediate repaint.
+  uint32_t frameMs = DISPLAY_SCROLL ? OVERVIEW_FRAME_MS : POLL_MS;
+  if (_dirty || millis() - _overviewDrawn >= frameMs) {
+    if (DISPLAY_SCROLL)
+      _renderTicker(fw);
+    else
+      _renderFixed(fw);
+    if (_alertActive) _drawAlertBanner();
+    _overviewDrawn = millis();
+    _dirty = false;
+  }
 }
 #endif  // OUT_DISPLAY

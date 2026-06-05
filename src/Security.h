@@ -40,9 +40,14 @@ inline bool apPasswordNeedsRandom() {
 // Return the AP password to actually use.  When the configured
 // AP_PASSWORD is a real, user-set value it is returned unchanged and
 // `generated` is left false.  Otherwise a random 12-char password is
-// minted once, stored in NVS (namespace "sec", key "appw"), reused on
-// every later boot, and `generated` is set true so the caller can
-// surface it on the LCD + serial.
+// minted once, stored in NVS (namespace "sec", key "appw"), and reused
+// on every later boot.
+//
+// `generated` tells the caller whether to surface the password on the
+// LCD + serial.  By default it is set true ONLY on the boot that mints
+// the password (so a persisted secret isn't re-displayed at every
+// power-up); set AP_SHOW_PASSWORD_EACH_BOOT (Config.h) to true to show
+// it on every boot instead.
 inline String effectiveApPassword(bool& generated) {
   generated = false;
   if (!apPasswordNeedsRandom()) return String(AP_PASSWORD);
@@ -50,6 +55,7 @@ inline String effectiveApPassword(bool& generated) {
   Preferences prefs;
   prefs.begin("sec", /*readOnly=*/false);
   String pw = prefs.getString("appw", "");
+  bool minted = false;
   if (pw.length() < 8) {
     // Ambiguity-free alphabet (no 0/O, 1/l/I) — it gets typed by hand.
     static const char cs[] =
@@ -58,9 +64,12 @@ inline String effectiveApPassword(bool& generated) {
     pw = "";
     for (int i = 0; i < 12; ++i) pw += cs[esp_random() % n];
     prefs.putString("appw", pw);
+    minted = true;
   }
   prefs.end();
-  generated = true;
+  // Show it the first time it's minted; thereafter only if the user
+  // opted into showing it on every boot.
+  generated = minted || AP_SHOW_PASSWORD_EACH_BOOT;
   return pw;
 }
 
