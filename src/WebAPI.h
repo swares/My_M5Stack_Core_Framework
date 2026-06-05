@@ -109,6 +109,13 @@ class WebAPI {
   // encrypted on the wire.
   bool _requireAuth();
 
+  // Optional Host-header allowlist (WEB_HOST_ALLOWLIST).  Returns false
+  // only when the list is non-empty, we're in station mode, and the
+  // request's Host header matches nothing on it.  Off (always true) when
+  // the list is empty or in AP / setup mode.  Checked first by
+  // _requireAuth(); a rejected request gets a 403.
+  bool _hostAllowed();
+
   void _cors();
   void _json(JsonDocument& doc, int code = 200);
   void _buildSensorObj(JsonObject& obj, IDevice* p);

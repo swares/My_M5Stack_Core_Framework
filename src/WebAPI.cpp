@@ -1656,6 +1656,11 @@ String WebAPI::_reqPath() {
 
 // ── helpers ───────────────────────────────────────────────────
 bool WebAPI::_requireAuth() {
+  // Optional Host-header allowlist — reject before any other handling.
+  if (!_hostAllowed()) {
+    _srv->send(403, "text/plain", "Forbidden: host not allowed");
+    return false;
+  }
   // Effective dashboard login: NVS override (set via the setup portal)
   // first, else the compiled Secrets.h value.
   String user = Settings::webUser();
@@ -1666,6 +1671,33 @@ bool WebAPI::_requireAuth() {
   if (_srv->authenticate(user.c_str(), Settings::webPass().c_str())) return true;
   // Send 401 + WWW-Authenticate so the browser prompts.
   _srv->requestAuthentication();
+  return false;
+}
+
+// ── _hostAllowed ──────────────────────────────────────────────
+//  Optional Host-header allowlist (WEB_HOST_ALLOWLIST).  Compares the
+//  request's Host (port stripped, case-insensitive) against the
+//  comma-separated allowlist.  Disabled when the list is empty, and
+//  never enforced in AP / setup mode — the AP is the device's own
+//  network, so a bad allowlist can't strand recovery.
+bool WebAPI::_hostAllowed() {
+  if (WEB_HOST_ALLOWLIST[0] == '\0') return true;          // feature off
+  if (!_fw || _fw->apMode() || _setupMode()) return true;  // AP / setup
+  String host = _srv->hostHeader();
+  int colon = host.indexOf(':');
+  if (colon >= 0) host = host.substring(0, colon);  // strip ":port"
+  host.trim();
+  if (host.isEmpty()) return false;  // a filtered server demands a Host
+  String list = WEB_HOST_ALLOWLIST;
+  int start = 0;
+  while (start < static_cast<int>(list.length())) {
+    int comma = list.indexOf(',', start);
+    if (comma < 0) comma = list.length();
+    String item = list.substring(start, comma);
+    item.trim();
+    if (item.length() && item.equalsIgnoreCase(host)) return true;
+    start = comma + 1;
+  }
   return false;
 }
 

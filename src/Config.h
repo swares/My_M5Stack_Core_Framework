@@ -95,6 +95,18 @@
 // HTTP regardless of this flag.)
 [[maybe_unused]] constexpr bool WEB_AP_PLAIN_HTTP = false;
 
+// Optional Host-header allowlist (STATION mode only).  When non-empty,
+// the HTTPS dashboard/API answers a request ONLY if its Host header
+// matches one of these comma-separated values — your device IP and/or a
+// hostname you reach it by (e.g. "192.168.1.50,m5stack.local").  "" =
+// off (answer any Host).  This guards against DNS-rebinding and access
+// via unexpected hostnames; it does NOT restrict client IPs — do that at
+// your router/firewall.  Never enforced in AP / setup mode (the AP is
+// the device's own network), so a wrong value can't lock you out of
+// recovery.  HTTP Basic Auth (WEB_AUTH_USER) remains the real access
+// control; this is a lightweight extra.
+[[maybe_unused]] constexpr char WEB_HOST_ALLOWLIST[] = "";
+
 // Back-compat alias: older code/docs that say WEB_SERVER_PORT mean
 // "the port the dashboard is on", which is now the HTTPS port.
 #define WEB_SERVER_PORT WEB_HTTPS_PORT
