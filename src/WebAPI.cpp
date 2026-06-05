@@ -333,12 +333,12 @@ footer{text-align:center;padding:20px;color:var(--dim);font-size:.72rem}
     <div id="rule-list"></div>
     <form id="rule-form" hidden style="margin-top:8px;display:grid;grid-template-columns:auto 1fr;gap:5px 8px;font-size:.74rem;align-items:center">
       <input type="hidden" name="id">
-      <label>Slug</label><input name="slug" placeholder="geiger" autocomplete="off">
-      <label>Key</label><input name="key" placeholder="usv_per_h" autocomplete="off">
+      <label>Slug</label><input name="slug" list="rule-slugs" placeholder="geiger" autocomplete="off">
+      <label>Key</label><input name="key" list="rule-keys" placeholder="usv_per_h" autocomplete="off">
       <label>Kind</label><select name="kind"><option value="0">threshold</option><option value="1">event</option></select>
       <label>Op</label><select name="op"><option value="0">&ge;</option><option value="1">&le;</option><option value="2">&gt;</option><option value="3">&lt;</option></select>
       <label>Threshold</label><input name="thr" type="number" step="any">
-      <label>Gate key</label><input name="gk" placeholder="(optional) distance_km" autocomplete="off">
+      <label>Gate key</label><input name="gk" list="rule-keys" placeholder="(optional) distance_km" autocomplete="off">
       <label>Gate op</label><select name="gop"><option value="0">&ge;</option><option value="1">&le;</option><option value="2">&gt;</option><option value="3">&lt;</option></select>
       <label>Gate val</label><input name="gv" type="number" step="any">
       <label>Severity</label><select name="sev"><option value="0">info</option><option value="1">warn</option><option value="2">critical</option></select>
@@ -349,6 +349,8 @@ footer{text-align:center;padding:20px;color:var(--dim);font-size:.72rem}
       <label>Cooldown s</label><input name="cd" type="number" min="0">
       <span></span><span><button type="submit">Save</button> <button type="button" id="rule-cancel" class="ghost">Cancel</button></span>
     </form>
+    <datalist id="rule-slugs"><option value="geiger"><option value="lightning"><option value="pm25"><option value="env3"><option value="env4"><option value="co2"><option value="light"><option value="tvoc"><option value="multigas"><option value="modem"><option value="lora"></datalist>
+    <datalist id="rule-keys"><option value="usv_per_h"><option value="cpm"><option value="strikes"><option value="distance_km"><option value="energy"><option value="pm2_5"><option value="pm10"><option value="pm1_0"><option value="temp"><option value="humidity"><option value="pressure"><option value="co2"><option value="lux"><option value="tvoc"><option value="rssi_dbm"><option value="signal_pct"></datalist>
   </div>
 </div>
 
