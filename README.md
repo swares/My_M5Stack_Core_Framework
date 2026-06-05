@@ -254,6 +254,123 @@ a local Mosquitto with TLS; the common case:
 
 ---
 
+## Threshold Alarms &amp; Alerting (`AlertManager`)
+
+The alerting system is a fifth output module — alongside Web, Serial,
+Display, MQTT and SD — toggled by `OUT_ALERTS` in `Config.h`. Where the
+other outputs *report* the current state every cycle, the alarm engine
+watches for a **threshold crossing or an event** and fans a notification
+out to one or more channels. It is the framework's one stateful output:
+everything else is current-state polling, this adds "a thing just
+happened."
+
+It needs **no sensor changes**. Every plugin already exposes typed
+readings through `getReadings()`; a rule is just `(slug, key, op, value)`
+evaluated over those. AS3935, Geiger, the gas/ENV units — all untouched.
+
+### How it works
+
+Each poll (`POLL_MS`, 500 ms) the engine reads the value named by every
+enabled rule and runs it through a per-rule state machine:
+
+- **THRESHOLD** rules — a sustained comparison (e.g. `geiger usv_per_h ≥
+  5.0`). Debounced (must hold for *N* samples), and they clear only after
+  the reading backs off through a **hysteresis** band, so they don't
+  chatter around the line.
+- **EVENT** rules — an upward edge on a counter (e.g. AS3935 `strikes`
+  increments), optionally **gated** by a second reading (`distance_km ≤
+  10`).
+
+Per rule you also set a **severity** (info / warn / critical), whether it
+**latches until acknowledged** vs **auto-resets**, and a **cooldown** that
+rate-limits repeat notifications while a condition persists.
+
+A state change emits an event (raised / renotify / cleared / ack) into a
+16-deep in-RAM ring and the serial log, and routes it to the rule's
+**channels**.
+
+### Channels (sinks)
+
+A rule carries a channel bitmask; each event is fanned out to the
+channels that are both selected *and* available. A channel whose device
+or URL is absent silently disables itself.
+
+| Channel | What it does | Config |
+|---|---|---|
+| **Buzzer** | Chirps the built-in M5 speaker on a raised WARN/CRITICAL | `ALERT_BUZZER`, `ALERT_BUZZER_HZ/_MS` |
+| **LCD** | Severity-coloured banner across the top of the live display | — (reuses `DisplayManager`) |
+| **MQTT** | Publishes the event JSON to `<base>/alert` (not retained) | reuses the MQTT broker config |
+| **SD** | Appends a CSV row to `/alerts.csv` (separate from the sensor log) | — (reuses the card) |
+| **Dashboard** | Surfaces in `/api/alerts` + the dashboard Alarms panel | — |
+| **LoRa** | Transmits the alert text over LoRa P2P (raise/clear edges) | reuses the registered `lora` plugin |
+| **Webhook** | HTTPS POST of the event JSON to any URL | `ALERT_WEBHOOK_URL`, `ALERT_WEBHOOK_AUTH` |
+| **Email** | HTTPS POST of `{to,subject,text}` to your email API / relay | `ALERT_EMAIL_URL/_AUTH/_TO` |
+| **SMS** | Cellular text via the modem (async AT, daily-capped) | `ALERT_SMS_TO` + a registered `modem` |
+
+The off-device HTTPS channels (Webhook, Email) share a **serialised
+outbound queue** — `update()` drains one POST per loop so two TLS
+handshakes never overlap. LoRa, Webhook, Email and SMS fire on state
+**edges only** (raise/clear, not every renotify) to spare airtime / cost.
+
+### Rules: seed defaults + runtime editing
+
+Two seed rules ship compiled in `Config.h`:
+
+- **Radiation** — `geiger usv_per_h ≥ ALERT_RAD_USV` (5.0), CRITICAL,
+  latched.
+- **Lightning** — AS3935 `strikes` edge, gated `distance_km ≤
+  ALERT_LIGHTNING_KM` (10), CRITICAL.
+
+Rules are then **runtime-editable and persistent**: the active set is
+stored as a JSON blob in NVS (`Settings`), hybrid with the compiled seed —
+exactly like Wi-Fi/MQTT (NVS override if present, else the seed). Edits
+take effect on the next poll (no reboot). **Reset** drops the NVS override
+back to the seed.
+
+Edit rules from the **dashboard** — the ⚙ Rules editor in the Alarms
+panel lists every rule with edit/delete and an add/edit form (slug, key,
+kind, op, threshold, gate, severity, the nine channel checkboxes, latch,
+debounce, hysteresis, cooldown) — or over REST:
+
+| Method · Endpoint | Action |
+|---|---|
+| `GET /api/alerts` | Engine state + the recent-event ring |
+| `POST /api/alerts/ack` `[?rule=N]` | Acknowledge latched rule(s) (default all) |
+| `GET /api/alerts/rules` | List the current rules |
+| `POST /api/alerts/rules/save` | Upsert one rule (JSON body; `id:0` = new) |
+| `POST /api/alerts/rules/delete?id=N` | Delete a rule |
+| `POST /api/alerts/rules/reset` | Restore the compiled seed rules |
+
+### Config reference
+
+```cpp
+#define OUT_ALERTS true                 // the engine on/off
+
+ALERT_RAD_USV / ALERT_RAD_COOLDOWN      // radiation seed rule
+ALERT_LIGHTNING_KM / _COOLDOWN          // lightning seed rule
+ALERT_BUZZER / _HZ / _MS                // buzzer sink
+ALERT_WEBHOOK_URL / _AUTH               // webhook sink   ("" = off)
+ALERT_EMAIL_URL / _AUTH / _TO           // email sink     ("" = off)
+ALERT_SMS_TO                            // SMS sink       ("" = off)
+```
+
+> Keep API keys / auth values in `Secrets.h`, not `Config.h`, if the file
+> is in version control.
+
+### Caveats
+
+- Rules evaluate at `POLL_MS` (500 ms). Latching sensors (Geiger ISR,
+  AS3935 INT) never miss a transient between polls; a slow polled ADC is
+  poll-rate-limited.
+- **SMS** owns the single Port-C UART — it is mutually exclusive with the
+  LLM / LoRa / GPS, costs per message (the modem caps sends per ~24 h), and
+  gives no delivery receipt. Email/Webhook reach a phone for free, so
+  prefer those unless cellular-without-Wi-Fi is required.
+- The SMS AT sequence and the LoRa radio params are the standard flows but
+  may need per-firmware tuning on real hardware.
+
+---
+
 ## I2C Hub Support (PaHUB / PCA9548A)
 
 Register a hub in `setup()` BEFORE adding plugins:
