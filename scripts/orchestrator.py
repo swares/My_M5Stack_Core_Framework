@@ -138,8 +138,13 @@ class CoreClient:
         self.base, self.auth, self.verify = base, auth, verify
 
     def _get(self, path, **params):
+        # allow_redirects=False: the Core's JSON API never legitimately
+        # 3xx-redirects, so refusing to follow redirects stops a spoofed/
+        # compromised Core (TLS is unverified on the LAN) from bouncing us
+        # to an internal address — defence-in-depth against SSRF-by-redirect.
         return requests.get(f"{self.base}{path}", params=params or None,
-                            auth=self.auth, verify=self.verify, timeout=8).json()
+                            auth=self.auth, verify=self.verify, timeout=8,
+                            allow_redirects=False).json()
 
     def ask(self, prompt: str, idle=CORE_IDLE_S, retries=2) -> str:
         """Submit a prompt and poll until the streamed reply is done."""
