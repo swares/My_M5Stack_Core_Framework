@@ -103,6 +103,11 @@ See `CODE_AUDIT.md` for the findings that motivated the entries below.
   (`CLIENT_ALLOWLIST`) is configured — closing the default-open exposure of an
   endpoint that can run Claude Code with shell/filesystem access. Set
   `SERVE_ALLOW_INSECURE = True` to override when already firewalled.
+- **No redirect-following on Core calls.** `CoreClient._get` now passes
+  `allow_redirects=False` — defence-in-depth so a spoofed/compromised Core
+  (TLS unverified on the LAN) can't 3xx-bounce the orchestrator to an internal
+  address. (orchestrator.py has no user-controlled request target, so there was
+  no classic SSRF; this hardens the one redirect edge.)
 
 ### Security
 - **Modem SMS hardened against AT-command injection.** `UartDevice_Modem`
