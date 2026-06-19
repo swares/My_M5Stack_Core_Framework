@@ -1236,7 +1236,8 @@ M5Stack_I2C_Framework/
     ├── orchestrator.py         Pi-side chat router; `--serve` is the endpoint NetDevice_Router escalates to
     ├── orchestrator_original.py  Pre-access-control orchestrator, kept for reference
     ├── orchestrator_README.md  Orchestrator + `--serve` usage
-    ├── openai-adapter_README.md  How the shared-protocol layout maps onto the repo
+    ├── openai-adapter_README.md  Contribution/apply note — shared-protocol layout + GitOps deploy
+    ├── openai_adapter_README.md  Adapter reference — endpoints, models, env vars, run & deploy
     └── openai_adapter/         OpenAI-compatible shim — /v1/chat/completions, /v1/models
         ├── main.py             FastAPI app (imports ../protocol.py)
         ├── __init__.py         Package marker
