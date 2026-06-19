@@ -1068,6 +1068,31 @@ timeout, not a total-duration cap, so a long answer that keeps
 streaming stays healthy. With `ROUTER_PI_HOST` left empty the router
 stays compiled-in but inert and answers every turn locally.
 
+### Host side: the Pi orchestrator & OpenAI adapter (`scripts/`)
+
+The Orange Pi the **escalated** route targets isn't a separate project — its code
+lives in this repo under [`scripts/`](scripts/), host-side Python that speaks the same
+fire-and-poll protocol the firmware serves:
+
+- **`orchestrator.py`** — the Pi-side router. `python orchestrator.py --serve` exposes
+  the HTTPS endpoint `NetDevice_Router` POSTs to (`ROUTER_PI_HOST` / `ROUTER_PI_PORT` /
+  `ROUTER_BEARER` line up with its `SERVE_*` settings); it classifies each turn and drives
+  **Claude Code** in a working directory, so the Anthropic key stays on the Pi.
+- **`protocol.py`** — the one canonical client for the device's `/api/{slug}` wire format
+  (`set?ask=…` → poll → `done`), shared by every host-side consumer so they can't drift
+  from the firmware.
+- **`openai_adapter/`** — an OpenAI-compatible shim (`POST /v1/chat/completions`,
+  `GET /v1/models`). It maps the device's three AI endpoints to "models" — `m5-llm` →
+  `/api/llm`, `m5-route` → `/api/route`, `m5-claude` → `/api/claude` — so any OpenAI client
+  (the `openai` SDK, LangChain, LiteLLM, …) can talk to the board, with `route_taken` passed
+  back in `system_fingerprint`. Only `m5-llm` works on every build; `m5-route` and `m5-claude`
+  reach the device only when it actually registers `NetDevice_Router` / `NetDevice_ClaudeAPI`
+  (the latter behind `ROUTER_DIRECT_API`). The adapter lists and accepts all three by default,
+  so on a build without those endpoints a request to them streams nothing and times out empty
+  rather than failing fast — trim the map via `M5_MODELS` to match your firmware.
+
+See `scripts/orchestrator_README.md` and `scripts/openai_adapter/README.md` for setup.
+
 ---
 
 ## Writing a Custom Plugin
@@ -1205,7 +1230,19 @@ M5Stack_I2C_Framework/
 │   ├── Plugin_PPS.h            Stackable: PPS (0x35) — programmable power supply — controllable
 │   ├── Plugin_HMI.h            Stackable: HMI (0x41) — encoder + buttons + 2 LEDs — controllable
 │   └── Plugin_FAN.h            Stackable: Fan Module v1.1 (0x18) — PWM fan + RPM — controllable
-└── README.md                   This file
+├── README.md                   This file
+└── scripts/                    Host-side Python (runs on the Orange Pi, not the board)
+    ├── protocol.py             One canonical client for the device's fire-and-poll API (sync + async)
+    ├── orchestrator.py         Pi-side chat router; `--serve` is the endpoint NetDevice_Router escalates to
+    ├── orchestrator_original.py  Pre-access-control orchestrator, kept for reference
+    ├── orchestrator_README.md  Orchestrator + `--serve` usage
+    ├── openai-adapter_README.md  How the shared-protocol layout maps onto the repo
+    └── openai_adapter/         OpenAI-compatible shim — /v1/chat/completions, /v1/models
+        ├── main.py             FastAPI app (imports ../protocol.py)
+        ├── __init__.py         Package marker
+        ├── requirements.txt    fastapi · uvicorn · httpx
+        ├── Dockerfile          Build from scripts/ so protocol.py is in context
+        └── README.md           Adapter usage — endpoints, models, env vars
 ```
 
 ---
