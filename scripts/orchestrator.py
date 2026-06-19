@@ -132,38 +132,17 @@ SERVE_ALLOW_INSECURE = False
 #  Tier 1  -  the CoreS3 Module LLM, over its existing HTTP API
 # ----------------------------------------------------------------------
 class CoreClient:
-    """Talks to UartDevice_ModuleLLM via /api/llm. Fire-and-poll, async."""
+    """Talks to UartDevice_ModuleLLM via /api/llm using the shared protocol client
+    (protocol.DeviceClient), so this stays in lock-step with the firmware + the OpenAI adapter.
+    The wire details (URLs, fields, delta extraction, idle/done logic) now live in protocol.py."""
 
     def __init__(self, base=CORE_URL, auth=CORE_AUTH, verify=CORE_VERIFY):
-        self.base, self.auth, self.verify = base, auth, verify
-
-    def _get(self, path, **params):
-        # allow_redirects=False: the Core's JSON API never legitimately
-        # 3xx-redirects, so refusing to follow redirects stops a spoofed/
-        # compromised Core (TLS is unverified on the LAN) from bouncing us
-        # to an internal address — defence-in-depth against SSRF-by-redirect.
-        return requests.get(f"{self.base}{path}", params=params or None,
-                            auth=self.auth, verify=self.verify, timeout=8,
-                            allow_redirects=False).json()
+        from protocol import DeviceClient   # shared module, same scripts/ dir
+        self._c = DeviceClient(base=base, auth=auth, verify=verify, idle=CORE_IDLE_S)
 
     def ask(self, prompt: str, idle=CORE_IDLE_S, retries=2) -> str:
         """Submit a prompt and poll until the streamed reply is done."""
-        for attempt in range(retries + 1):
-            try:
-                self._get("/api/llm/set", ask=prompt)       # returns immediately
-                last_change, prev = time.time(), ""
-                while time.time() - last_change < idle:
-                    s = self._get("/api/llm")
-                    if s.get("answer", "") != prev:          # tokens still arriving
-                        prev, last_change = s["answer"], time.time()
-                    if s.get("done") or s.get("timed_out"):
-                        return s.get("answer", "").strip() or "[empty reply]"
-                    time.sleep(0.3)
-                return prev.strip() or "[core went silent]"
-            except requests.RequestException as e:
-                if attempt == retries:
-                    return f"[core unreachable: {e}]"
-                time.sleep(1.0 * (attempt + 1))
+        return self._c.ask(prompt, slug="llm", idle=idle, retries=retries)
 
 
 # ----------------------------------------------------------------------
