@@ -14,6 +14,14 @@ and a maximum `--serve` request size (see *Operational limits* below).
 
 > Only `requests` is third-party (`pip install requests`); everything
 > the allowlist/server uses is the Python stdlib.
+>
+> **`protocol.py` is now a required sibling.** `CoreClient` no longer holds
+> the wire format — it delegates to `protocol.DeviceClient` (`from protocol
+> import DeviceClient`), so the device protocol lives in one place shared with
+> the OpenAI adapter. Keep `protocol.py` next to `orchestrator.py`; copying
+> `orchestrator.py` alone will fail to import. (`protocol.py` itself imports
+> `requests` lazily, so the orchestrator's only third-party dep is still
+> `requests`.)
 
 ## Running
 
@@ -115,6 +123,23 @@ if not host_allowed(request.host):      abort(403)
 Construct a fresh `Orchestrator()` per request (its `history` isn't
 thread-safe to share). The concurrent-agent cap lives in `run_claude` via a
 module-level semaphore, so it applies even through your own front-end.
+
+## Shared protocol & the OpenAI adapter
+
+The device protocol (URLs, field names, delta extraction, the done/idle
+decision) lives in `protocol.py` and is shared by two host-side consumers, so
+a protocol change is one commit that can't drift between them:
+
+| Consumer | Uses | Surface |
+|---|---|---|
+| `orchestrator.py` (this file) | `protocol.DeviceClient` (sync) | Terminal chat + the `--serve` event-stream the firmware router parses. |
+| `openai_adapter/` | `protocol.AsyncDeviceClient` (async) | OpenAI-compatible `/v1/chat/completions` + `/v1/models`. |
+
+The orchestrator is the *router/voice* tier (it classifies turns and escalates
+to Claude Code); the adapter is a thin OpenAI shim that maps device plugins to
+"models" for off-the-shelf OpenAI clients. See `openai_adapter/README.md` for
+that surface, and `openai-adapter_README.md` for how the shared-protocol layout
+is applied to the repo.
 
 ## Security note
 
