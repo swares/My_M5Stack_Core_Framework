@@ -95,6 +95,15 @@ class AlertManager {
   // (Driven from the dashboard / REST in a later milestone.)
   void ack(int ruleId = -1);
 
+  // Inject an externally-sourced alert directly into the ring + route it.
+  // Called by POST /api/alerts/inject; bypasses rule-engine evaluation.
+  // slug/key identify the source (e.g. "ext", "server_cpu").
+  // channels defaults to LCD|MQTT|SD|DASH — caller may override.
+  // Returns false only when the manager is disabled or slug/key are empty.
+  bool injectEvent(const char* slug, const char* key, float value,
+                   Severity sev,
+                   uint16_t channels = CH_LCD | CH_MQTT | CH_SD | CH_DASH);
+
   // Snapshot for /api/alerts + the dashboard banner (milestone 3).
   void toJson(JsonObject& o) const;
 
@@ -165,10 +174,12 @@ class AlertManager {
 class Framework;
 class AlertManager {
  public:
+  enum Severity : uint8_t { SEV_INFO = 0, SEV_WARN = 1, SEV_CRITICAL = 2 };
   bool enabled = false;
   void begin(Framework*) {}
   void update() {}
   void ack(int = -1) {}
+  bool injectEvent(const char*, const char*, float, Severity, uint16_t = 0) { return false; }
   void toJson(JsonObject&) {}
   void rulesToJson(JsonArray&) const {}
   bool upsertRule(JsonObjectConst) { return false; }

@@ -181,6 +181,10 @@ void WebAPI::begin(Framework* fw) {
     if (!_requireAuth()) return;
     _route_alerts();
   });
+  // POST /api/alerts/inject — inbound webhook from external systems.
+  // Has its own auth (X-API-Key or Basic Auth fallback); does NOT go
+  // through _requireAuth() so it bypasses the CSRF guard too.
+  _srv->on("/api/alerts/inject", [this](){ _doAlertInject(_srv); });
   _srv->on("/api/endpoints", [this](){
     if (!_requireAuth()) return;
     _route_endpoints();
@@ -236,11 +240,12 @@ void WebAPI::begin(Framework* fw) {
     // _routeDynamic(); both servers share it.
     _routeDynamic(_srv, uri);
   });
-  // Capture the CSRF header so _doControl can read it (the server only
-  // surfaces non-standard request headers that are registered here).
+  // Capture non-standard request headers the server needs to read.
+  // X-Requested-With: CSRF guard on state-changing routes.
+  // X-API-Key: inbound webhook auth on /api/alerts/inject.
   {
-    static const char* csrfHdr[] = {"X-Requested-With"};
-    _srv->collectHeaders(csrfHdr, 1);
+    static const char* hdrs[] = {"X-Requested-With", "X-API-Key"};
+    _srv->collectHeaders(hdrs, 2);
   }
   _srv->begin();
 
@@ -1110,6 +1115,89 @@ void WebAPI::_doControl(Srv* s, const String& slug) {
   apSendJson(s, doc, rejected.size() ? 400 : 200);
 }
 
+// ── _doAlertInject ────────────────────────────────────────────
+//  POST /api/alerts/inject — receive an externally-sourced alert from
+//  any system that can make an HTTPS request and push it into the
+//  AlertManager ring + route it to configured sinks.
+//
+//  Auth (option B — static API key):
+//    When WEBHOOK_INJECT_API_KEY is non-empty the caller must supply
+//      X-API-Key: <the key>
+//    and no Basic Auth credentials are required.  When the key is
+//    empty the endpoint falls back to standard dashboard Basic Auth so
+//    it's still protected on a device that hasn't configured a key yet.
+//
+//  Request body (JSON):
+//    {
+//      "slug":     "<source id>",    // required — e.g. "server", "pi"
+//      "key":      "<metric name>",  // required — e.g. "cpu_temp"
+//      "value":    <float>,          // required
+//      "severity": "warn",           // optional — "info"|"warn"|"critical"
+//                                    //  or 0/1/2; default "warn"
+//      "channels": <uint16>          // optional bitmask; default LCD|MQTT|SD|DASH
+//    }
+//
+//  Templated on the server type so HTTPS + plain-AP share one body.
+template <class Srv>
+void WebAPI::_doAlertInject(Srv* s) {
+  // ── Auth ─────────────────────────────────────────────────────
+  if (WEBHOOK_INJECT_API_KEY[0]) {
+    // API-key path: check X-API-Key header; no browser credentials needed.
+    if (s->header("X-API-Key") != WEBHOOK_INJECT_API_KEY) {
+      apCors(s);
+      s->send(401, "application/json", "{\"error\":\"invalid API key\"}");
+      return;
+    }
+  } else {
+    // No dedicated key configured — fall back to dashboard credentials.
+    String user = Settings::webUser();
+    if (!user.isEmpty() &&
+        !s->authenticate(user.c_str(), Settings::webPass().c_str())) {
+      s->requestAuthentication();
+      return;
+    }
+  }
+  // ── Method guard ─────────────────────────────────────────────
+  if (s->method() != HTTP_POST) {
+    apCors(s);
+    s->send(405, "application/json", "{\"error\":\"POST required\"}");
+    return;
+  }
+  // ── Parse body ───────────────────────────────────────────────
+  JsonDocument d;
+  if (deserializeJson(d, s->arg("plain"))) {
+    apCors(s);
+    s->send(400, "application/json", "{\"error\":\"invalid JSON\"}");
+    return;
+  }
+  const char* slug = d["slug"] | "";
+  const char* key  = d["key"]  | "";
+  float value      = d["value"] | 0.0f;
+
+  // Severity: string ("info"|"warn"|"critical") or integer (0/1/2).
+  AlertManager::Severity sev = AlertManager::SEV_WARN;
+  if (d["severity"].is<int>()) {
+    uint8_t sv = d["severity"].as<uint8_t>();
+    if (sv <= AlertManager::SEV_CRITICAL)
+      sev = static_cast<AlertManager::Severity>(sv);
+  } else if (d["severity"].is<const char*>()) {
+    String ss = d["severity"] | "warn"; ss.toLowerCase();
+    if      (ss == "info")     sev = AlertManager::SEV_INFO;
+    else if (ss == "critical") sev = AlertManager::SEV_CRITICAL;
+  }
+
+  // Channels: caller bitmask or default (LCD|MQTT|SD|DASH).
+  uint16_t defCh = AlertManager::CH_LCD | AlertManager::CH_MQTT |
+                   AlertManager::CH_SD  | AlertManager::CH_DASH;
+  uint16_t ch = d["channels"] | defCh;
+
+  bool ok = _fw->alerts.injectEvent(slug, key, value, sev, ch);
+  apCors(s);
+  s->send(ok ? 200 : 400, "application/json",
+          ok ? "{\"ok\":true}"
+             : "{\"ok\":false,\"error\":\"manager disabled or missing slug/key\"}");
+}
+
 // ── _routeDynamic ────────────────────────────────────────────
 //  The shared "everything that isn't a fixed route" dispatcher.  Both
 //  the HTTPS onNotFound and the standalone-AP onNotFound call this
@@ -1223,11 +1311,11 @@ void WebAPI::_routeDynamic(Srv* s, const String& path) {
 //  the endpoint chips.)
 template <class Srv>
 void WebAPI::_wirePlainAp(Srv* s) {
-  // Capture the CSRF header so _doControl can read it on the plain-AP
-  // server too (see the matching call in begin()).
+  // Capture non-standard request headers — mirrors the matching call in
+  // begin().  X-Requested-With: CSRF guard.  X-API-Key: inject auth.
   {
-    static const char* csrfHdr[] = {"X-Requested-With"};
-    s->collectHeaders(csrfHdr, 1);
+    static const char* hdrs[] = {"X-Requested-With", "X-API-Key"};
+    s->collectHeaders(hdrs, 2);
   }
   // ── HTML pages ────────────────────────────────────────────
   s->on("/", [this, s]() {
@@ -1317,6 +1405,7 @@ void WebAPI::_wirePlainAp(Srv* s) {
     JsonDocument doc; JsonObject o = doc.to<JsonObject>();
     _fw->alerts.toJson(o); apSendJson(s, doc);
   });
+  s->on("/api/alerts/inject", [this, s]() { _doAlertInject(s); });
   s->on("/api/mqtt/publish", [this, s]() {
     if (!apAuth(s)) return;
     bool fired = _fw->mqtt.publishNow();

@@ -115,6 +115,10 @@ class WebAPI {
   // Control a device: POST/GET /api/<slug>/set.  Validates + applies
   // each param through the plugin's command(), echoes the result.
   template <class Srv> void _doControl(Srv* s, const String& slug);
+  // POST /api/alerts/inject — receive an externally-sourced alert and
+  // push it into the AlertManager ring.  Auth: X-API-Key header when
+  // WEBHOOK_INJECT_API_KEY is set; Basic Auth fallback otherwise.
+  template <class Srv> void _doAlertInject(Srv* s);
   // POST /api/settings/save — merge supplied credentials, reply, reboot.
   template <class Srv> void _doSettingsSave(Srv* s);
   // Fill `doc` with the non-secret settings snapshot (SSID, usernames,

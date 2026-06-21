@@ -384,6 +384,24 @@ bool AlertManager::_httpPost(const String& url, const String& auth,
   return ok;
 }
 
+// ── injectEvent — inbound webhook path ───────────────────────
+//  Pushes an externally-sourced alert directly into the ring and routes
+//  it to the configured channel sinks, bypassing rule-engine evaluation.
+//  The synthetic Rule (id = 0) carries the caller-supplied slug/key/sev/
+//  channels so _emit() and _route() work without modification.
+bool AlertManager::injectEvent(const char* slug, const char* key,
+                                float value, Severity sev, uint16_t channels) {
+  if (!enabled || !slug || !slug[0] || !key || !key[0]) return false;
+  Rule r{};
+  r.id       = 0;    // 0 = externally injected — not a rule-engine entry
+  r.severity = sev;
+  r.channels = channels;
+  strncpy(r.slug, slug, sizeof(r.slug) - 1); r.slug[sizeof(r.slug) - 1] = '\0';
+  strncpy(r.key,  key,  sizeof(r.key)  - 1); r.key[sizeof(r.key)  - 1] = '\0';
+  _emit(r, EV_RAISED, value);
+  return true;
+}
+
 void AlertManager::toJson(JsonObject& o) const {
   o["enabled"] = enabled ? 1 : 0;
   o["rules"] = static_cast<uint8_t>(_rules.size());
