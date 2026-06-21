@@ -352,6 +352,45 @@ plugin's `getReadings()` key the list doesn't cover. Or edit over REST:
 | `POST /api/alerts/rules/save` | Upsert one rule (JSON body; `id:0` = new) |
 | `POST /api/alerts/rules/delete?id=N` | Delete a rule |
 | `POST /api/alerts/rules/reset` | Restore the compiled seed rules |
+| `POST /api/alerts/inject` | Push an externally-sourced alert into the engine (see below) |
+
+### Inbound webhook — `POST /api/alerts/inject`
+
+External systems (a Pi, a server, a CI pipeline) can push alerts directly into
+the framework over HTTPS. The event lands in the ring and is fanned out to the
+same channel sinks as a rule-triggered alert — buzzer, LCD banner, MQTT,
+SD card, LoRa, etc.
+
+**Auth** — set `WEBHOOK_INJECT_API_KEY` in `Secrets.h` to a long random string.
+Callers must then supply `X-API-Key: <your-key>`; no browser credentials
+are needed. When the key is left empty the endpoint falls back to standard HTTP
+Basic Auth (`WEB_AUTH_USER` / `WEB_AUTH_PASS`).
+
+**Request body (JSON):**
+
+```json
+{
+  "slug":     "server",       // required — identifies the source (free text, ≤ 11 chars)
+  "key":      "cpu_temp",     // required — identifies the metric  (free text, ≤ 15 chars)
+  "value":    92.5,           // required — numeric reading
+  "severity": "warn",         // optional — "info" | "warn" | "critical"  (or 0 / 1 / 2)
+                              //            default: "warn"
+  "channels": 30              // optional — bitmask of AlertManager::Channel values
+                              //            default: CH_LCD | CH_MQTT | CH_SD | CH_DASH (= 0x1E)
+}
+```
+
+**Example:**
+
+```bash
+curl -k -X POST https://<device-ip>/api/alerts/inject \
+  -H "X-API-Key: your-secret-key" \
+  -H "Content-Type: application/json" \
+  -d '{"slug":"server","key":"cpu_temp","value":92.5,"severity":"warn"}'
+```
+
+Returns `{"ok":true}` on success, `{"ok":false,"error":"…"}` if the manager
+is disabled or `slug`/`key` are missing.
 
 ### Config reference
 
@@ -361,12 +400,19 @@ plugin's `getReadings()` key the list doesn't cover. Or edit over REST:
 ALERT_RAD_USV / ALERT_RAD_COOLDOWN      // radiation seed rule
 ALERT_LIGHTNING_KM / _COOLDOWN          // lightning seed rule
 ALERT_BUZZER / _HZ / _MS                // buzzer sink
-ALERT_WEBHOOK_URL / _AUTH               // webhook sink   ("" = off)
-ALERT_EMAIL_URL / _AUTH / _TO           // email sink     ("" = off)
-ALERT_SMS_TO                            // SMS sink       ("" = off)
+ALERT_WEBHOOK_URL / _AUTH               // outbound webhook sink  ("" = off)
+ALERT_EMAIL_URL / _AUTH / _TO           // email sink             ("" = off)
+ALERT_SMS_TO                            // SMS sink               ("" = off)
 ```
 
-> Keep API keys / auth values in `Secrets.h`, not `Config.h`, if the file
+Inbound webhook config goes in `Secrets.h`:
+
+```cpp
+WEBHOOK_INJECT_API_KEY   // X-API-Key callers must send to POST /api/alerts/inject
+                         // ("" = fall back to Basic Auth)
+```
+
+> Keep all API keys / auth values in `Secrets.h`, not `Config.h`, if the file
 > is in version control.
 
 ### Caveats
@@ -461,6 +507,7 @@ the first time you connect (see [HTTPS / TLS](#https--tls) below).
 | GET | `/api/sdcard/flush`  | Commit buffered SD writes now (close+reopen); returns status doc |
 | GET | `/api/sdcard/eject`  | Cleanly close the log file + unmount — card safe to remove |
 | GET | `/api/endpoints`     | Self-describing list of every available endpoint |
+| POST | `/api/alerts/inject` | Push an externally-sourced alert into the engine (auth: `X-API-Key` or Basic Auth) |
 
 `/api/all` and `/api/config` include a `board` object with the detected
 board name and resolved I2C pin assignments, so a client can tell whether
