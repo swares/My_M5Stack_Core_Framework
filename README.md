@@ -312,8 +312,8 @@ or URL is absent silently disables itself.
 | **SD** | Appends a CSV row to `/alerts.csv` (separate from the sensor log) | — (reuses the card) |
 | **Dashboard** | Surfaces in `/api/alerts` + the dashboard Alarms panel | — |
 | **LoRa** | Transmits the alert text over LoRa P2P (raise/clear edges) | reuses the registered `lora` plugin |
-| **Webhook** | HTTPS POST of the event JSON to any URL | `ALERT_WEBHOOK_URL`, `ALERT_WEBHOOK_AUTH` |
 | **Email** | HTTPS POST of `{to,subject,text}` to your email API / relay | `ALERT_EMAIL_URL/_AUTH/_TO` |
+| **Webhook** | HTTPS POST of the event JSON to any URL | `ALERT_WEBHOOK_URL`, `ALERT_WEBHOOK_AUTH` |
 | **SMS** | Cellular text via the modem (async AT, daily-capped) | `ALERT_SMS_TO` + a registered `modem` |
 
 The off-device HTTPS channels (Webhook, Email) share a **serialised
